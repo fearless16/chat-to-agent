@@ -16,9 +16,9 @@ class ChatGPTAPIAdapter(ProviderAdapter):
     supports_tools = True
 
     def __init__(self, api_key: str = "test-key", model: str = "gpt-4o") -> None:
+        super().__init__()
         self.api_key = api_key
         self.model = model
-        self._call_count = 0
         self._max_healthy_calls = 5
 
     async def send(

@@ -18,9 +18,9 @@ class LocalLLMAdapter(ProviderAdapter):
     def __init__(
         self, model: str = "qwen3.5", endpoint: str = "http://localhost:11434"
     ) -> None:
+        super().__init__()
         self.model = model
         self.endpoint = endpoint
-        self._call_count = 0
 
     async def send(
         self, prompt: str, context: Optional[list[dict]] = None

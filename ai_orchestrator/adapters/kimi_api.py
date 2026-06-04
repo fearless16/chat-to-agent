@@ -16,9 +16,9 @@ class KimiAPIAdapter(ProviderAdapter):
     supports_tools = False
 
     def __init__(self, api_key: str = "test-key", model: str = "kimi-latest") -> None:
+        super().__init__()
         self.api_key = api_key
         self.model = model
-        self._call_count = 0
 
     async def send(
         self, prompt: str, context: Optional[list[dict]] = None

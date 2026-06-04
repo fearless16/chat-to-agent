@@ -16,8 +16,8 @@ class ChatGPTUIAdapter(ProviderAdapter):
     supports_tools = False
 
     def __init__(self, headless: bool = True) -> None:
+        super().__init__()
         self.headless = headless
-        self._call_count = 0
 
     async def send(
         self, prompt: str, context: Optional[list[dict]] = None

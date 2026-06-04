@@ -1,4 +1,4 @@
-"""ProviderAdapter base protocol and response model."""
+"""ProviderAdapter base protocol with circuit breaker integration."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ from abc import ABC, abstractmethod
 from typing import AsyncIterator, Optional
 
 from pydantic import BaseModel, Field
+
+from ai_orchestrator.utils.backoff import CircuitBreaker
 
 
 class ProviderResponse(BaseModel):
@@ -20,37 +22,67 @@ class ProviderResponse(BaseModel):
 
 
 class ProviderAdapter(ABC):
-    """Abstract interface all provider adapters must implement."""
+    """Abstract interface with circuit breaker integration."""
 
     provider_name: str = ""
     supports_streaming: bool = False
     supports_tools: bool = False
 
+    def __init__(self) -> None:
+        self._circuit_breaker = CircuitBreaker(
+            failure_threshold=3,
+            recovery_timeout_ms=60_000,
+            half_open_max_calls=1,
+        )
+        self._call_count = 0
+
     @abstractmethod
     async def send(
         self, prompt: str, context: Optional[list[dict]] = None
     ) -> ProviderResponse:
-        """Send a prompt (with optional context) and return the response."""
         ...
+
+    async def protected_send(
+        self, prompt: str, context: Optional[list[dict]] = None
+    ) -> ProviderResponse:
+        """Send with circuit breaker — opens after 3 failures."""
+        self._call_count += 1
+        try:
+            response = await self._circuit_breaker.call(
+                self.send, prompt, context=context
+            )
+            if response.success:
+                self._circuit_breaker.record_success()
+            else:
+                self._circuit_breaker.record_failure()
+            return response
+        except Exception as e:
+            self._circuit_breaker.record_failure()
+            return ProviderResponse(success=False, error=str(e))
 
     @abstractmethod
     async def health_check(self) -> bool:
-        """Return True if the provider is reachable and healthy."""
         ...
+
+    async def safe_health_check(self) -> bool:
+        """Health check that returns False when circuit is open."""
+        if self._circuit_breaker.is_open:
+            return False
+        try:
+            return await self.health_check()
+        except Exception:
+            return False
 
     @abstractmethod
     def get_context_limit(self) -> int:
-        """Return the maximum context window size in tokens."""
         ...
 
     @abstractmethod
     async def is_rate_limited(self) -> bool:
-        """Return True if the provider is currently rate-limiting us."""
         ...
 
     @abstractmethod
     async def refresh_session(self) -> bool:
-        """Refresh the session (login, token rotation). Return True on success."""
         ...
 
     async def send_stream(
