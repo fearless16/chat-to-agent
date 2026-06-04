@@ -1,0 +1,84 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing & coverage
+htmlcov/
+.coverage
+.coverage.*
+.pytest_cache/
+.cache/
+hypothesis/
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+*.py,cover
+
+# Docs
+site/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+
+# Docker
+docker/containers/
+
+# Orchestrator runtime
+data/
+*.db
+*.sqlite3
+
+# Playwright browser binaries
+ms-playwright/
+
+# Secrets (don't even check in examples)
+*.key
+*.pem
+*.crt
+!test*.key
+
+# Monitoring data
+monitoring/grafana/data/
+prometheus_data/
+
+# Compiled
+*.manifest
+*.spec
+
+# Package lockfiles
+Pipfile.lock
+poetry.lock
+
+# Repo-specific
+.out/
+.deepsource/

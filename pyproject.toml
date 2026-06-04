@@ -1,0 +1,134 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ai-orchestrator"
+version = "0.1.0"
+description = "Production-grade multi-provider AI orchestration platform"
+requires-python = ">=3.13"
+license = { text = "MIT" }
+authors = [
+    { name = "CodeWhale" },
+]
+
+dependencies = [
+    # Core async runtime
+    "anyio>=4.9",
+    "pydantic>=2.11,<3",
+    "pydantic-settings>=2.8",
+
+    # HTTP client
+    "httpx>=0.28,<1",
+    "httpx-sse>=0.4",
+
+    # Redis — streams, queues, caching
+    "redis>=5.3,<6",
+    "redis[hiredis]>=5.3,<6",
+
+    # PostgreSQL
+    "sqlalchemy[asyncio]>=2.0,<3",
+    "asyncpg>=0.30",
+    "alembic>=1.15",
+
+    # Browser automation
+    "playwright>=1.52",
+
+    # Observability
+    "opentelemetry-api>=1.32",
+    "opentelemetry-sdk>=1.32",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.32",
+    "opentelemetry-instrumentation>=0.53b",
+    "prometheus-client>=0.21",
+    "structlog>=25.1",
+
+    # Security
+    "cryptography>=44.0",
+
+    # Object storage
+    "boto3>=1.37",
+
+    # Web framework for frontend/gateway
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.34",
+
+    # Utilities
+    "orjson>=3.10",
+    "python-dotenv>=1.1",
+    "tenacity>=9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3,<9",
+    "pytest-asyncio>=0.25",
+    "pytest-cov>=6.1",
+    "pytest-mock>=3.14",
+    "pytest-benchmark>=5.1",
+    "pytest-httpx>=0.35",
+    "hypothesis>=6.130",
+    "syrupy>=4.9",
+    "ruff>=0.11",
+    "mypy>=1.15",
+    "pre-commit>=4.2",
+]
+sandbox = [
+    "docker>=7.1",
+]
+docs = [
+    "mkdocs>=1.6",
+    "mkdocstrings[python]>=0.29",
+    "mkdocs-material>=9.6",
+]
+
+[tool.hatch.build]
+include = ["ai_orchestrator/**"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["ai_orchestrator/tests"]
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]
+log_cli = true
+log_cli_level = "INFO"
+addopts = "-v --tb=short --strict-markers --cov=ai_orchestrator --cov-report=term-missing --cov-report=html"
+
+[tool.coverage.run]
+source = ["ai_orchestrator"]
+branch = true
+omit = ["ai_orchestrator/tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "def __repr__",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+indent-width = 4
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "ARG", "RUF"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+ignore_missing_imports = true
+disallow_any_unimported = true
+no_implicit_optional = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
