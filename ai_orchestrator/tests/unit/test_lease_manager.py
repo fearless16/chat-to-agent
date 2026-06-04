@@ -422,8 +422,12 @@ class TestEdgeCases:
         assert lease2.account_id == "acct-1"
 
     def test_preferred_provider_no_accounts(self, manager: LeaseManager):
+        # Register only unavailable accounts so fallback also fails
         manager.register_account(
-            Account(id="o1", provider="openai")
+            Account(id="o1", provider="openai", state=AccountState.ACTIVE)
+        )
+        manager.register_account(
+            Account(id="o2", provider="openai", state=AccountState.JAIL)
         )
         with pytest.raises(NoAvailableAccount):
             manager.request_lease(

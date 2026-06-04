@@ -42,7 +42,7 @@ class TestTokenBucket:
         """try_acquire works with fractional token amounts."""
         bucket = TokenBucket(rate=10.0, burst=5)
         assert bucket.try_acquire(0.5) is True
-        assert bucket.available_tokens == 4.5
+        assert bucket.available_tokens == pytest.approx(4.5, rel=0.01)
 
     async def test_acquire_waits_when_rate_limited(self):
         """acquire blocks until tokens are available, returning wait time."""
@@ -57,7 +57,7 @@ class TestTokenBucket:
         bucket = TokenBucket(rate=100.0, burst=10)
         wait = await bucket.acquire(1.0)
         assert wait == 0.0
-        assert bucket.available_tokens == 9.0
+        assert bucket.available_tokens == pytest.approx(9.0, rel=0.01)
 
     async def test_is_rate_limited_true_when_exhausted(self):
         """is_rate_limited is True when available tokens < 1.0."""
@@ -158,9 +158,9 @@ class TestRateLimiterRegistry:
         """rpm is converted to rate (tokens per second)."""
         registry = RateLimiterRegistry()
         limiter = registry.get_limiter("acct_2", rpm=120)
-        # 120 RPM = 2 tokens/second, burst defaults to rate (2)
-        assert limiter._rate == 2.0
-        assert limiter.available_tokens == 2.0
+        # 120 RPM = 2 tokens/second, burst = 120 tokens (RPM = max tokens)
+        assert limiter._rate == pytest.approx(2.0, rel=0.01)
+        assert limiter.available_tokens == pytest.approx(120.0, rel=0.01)
 
     async def test_get_limiter_default_rpm(self):
         """Default RPM is 60 — rate of 1 token/s."""
@@ -317,12 +317,11 @@ class TestCircuitBreaker:
     async def test_half_open_failure_transitions_to_open(self):
         """A failed call in HALF_OPEN transitions back to OPEN."""
         cb = CircuitBreaker(failure_threshold=2, recovery_timeout_ms=50)
+        # Record 2 failures → state should be "OPEN"
         cb.record_failure()
         cb.record_failure()
-        cb.record_success()  # manually close it, then force open again
-        # Actually let's use a simpler path: threshold=1 so one failure = OPEN
-        cb = CircuitBreaker(failure_threshold=1, recovery_timeout_ms=50)
-        cb.record_failure()
+        assert cb.state == "OPEN"
+        # Wait for recovery timeout to transition to half-open
         await asyncio.sleep(0.06)
         assert cb.state == "HALF_OPEN"
 

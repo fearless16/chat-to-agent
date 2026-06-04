@@ -13,6 +13,7 @@ class TokenBucket:
     """
 
     def __init__(self, rate: float, burst: int | None = None) -> None:
+        # rate is in tokens per second
         if rate <= 0:
             raise ValueError("rate must be positive")
         if burst is not None and burst <= 0:

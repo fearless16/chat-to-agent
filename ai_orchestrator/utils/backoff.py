@@ -179,7 +179,7 @@ class CircuitBreaker:
         """
         self._failure_count += 1
         self._last_failure_time = time.monotonic()
-        if self._failure_count >= self._failure_threshold and self._state != "HALF_OPEN":
+        if self._failure_count >= self._failure_threshold:
             self._state = "OPEN"
 
     # -- async call -----------------------------------------------------------

@@ -23,6 +23,7 @@ class CredentialVault:
         """
         if master_key is None:
             master_key = self.generate_key()
+        self.master_key = master_key
         self._fernet = Fernet(master_key)
         self._store: dict[str, bytes] = {}
 
@@ -67,6 +68,7 @@ class CredentialVault:
         """Merge previously exported encrypted data into this vault.
 
         Existing keys are preserved (they are **not** overwritten).
+        Data encrypted with a different key will fail on retrieve.
         """
         for key, ciphertext in data.items():
             if key not in self._store:

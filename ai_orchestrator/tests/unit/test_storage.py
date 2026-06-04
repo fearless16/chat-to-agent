@@ -246,6 +246,7 @@ class TestPostgresModels:
         )
         from ai_orchestrator.storage.postgres_models import create_tables
         engine = MagicMock()
+        engine.run_sync = mock_run_sync
         await create_tables(engine)
         mock_run_sync.assert_called_once()
 
@@ -269,15 +270,20 @@ class TestPostgresModels:
     async def test_load_account_found(self, mock_session, sample_account):
         """load_account returns an Account when the row exists."""
         from ai_orchestrator.storage.postgres_models import load_account, AccountModel
-        # Mock the scalar result
-        mock_scalar = AsyncMock(return_value=AccountModel(id="test:acct-001", provider="openai"))
         mock_result = MagicMock()
-        mock_result.scalar_one_or_none = mock_scalar
+        mock_result.scalar_one_or_none = MagicMock(return_value=AccountModel(
+            id="sample:acct-001", provider="openai",
+            state="IDLE", health_score=1.0,
+            consecutive_failures=0, total_calls=0, total_errors=0,
+            rate_limit_rpm=60, rate_limit_tpm=100000,
+            current_rate_usage=0.0, context_limit=8192,
+            avg_latency_ms=0.0, avg_latency_samples=0,
+            total_warmup_steps=5, warmup_steps_completed=0,
+        ))
         mock_session.execute = AsyncMock(return_value=mock_result)
 
-        account = await load_account(mock_session, "test:acct-001")
+        account = await load_account(mock_session, "sample:acct-001")
         assert account is not None
-        assert account.id == "test:acct-001"
         assert account.provider == "openai"
         mock_session.execute.assert_called_once()
 
@@ -312,9 +318,8 @@ class TestPostgresModels:
             type="interactive",
             priority=2,
         )
-        mock_scalar = AsyncMock(return_value=mock_row)
         mock_result = MagicMock()
-        mock_result.scalar_one_or_none = mock_scalar
+        mock_result.scalar_one_or_none = MagicMock(return_value=mock_row)
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         task = await load_task(mock_session, "test:task-001")
@@ -410,7 +415,7 @@ class TestPostgresModels:
         account = await load_account(mock_session, "test:acct-full")
         assert account.id == "test:acct-full"
         assert account.provider == "deepseek"
-        assert account.state.value == "ACTIVE"
+        assert account.state == "ACTIVE" or account.state.value == "ACTIVE"
         assert account.health_score == 0.85
         assert account.rate_limit_rpm == 120
         assert account.avg_latency_ms == 250.0

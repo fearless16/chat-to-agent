@@ -232,7 +232,7 @@ class TestMetricsRegistry:
         mr.set_memory_usage(1_024_000_000)
         text = mr.get_metrics_text()
         assert "orchestrator_memory_usage_bytes" in text
-        assert "1024000000.0" in text
+        assert "1.024e+09" in text or "1024000000.0" in text
 
     def test_set_pool_size(self) -> None:
         from ai_orchestrator.observability.metrics import MetricsRegistry

@@ -81,7 +81,7 @@ class TestCredentialVault:
         vault1.store("key2", "val2")
         exported = vault1.export_encrypted()
 
-        vault2 = CredentialVault()
+        vault2 = CredentialVault(master_key=vault1.master_key)
         vault2.import_encrypted(exported)
         assert vault2.retrieve("key1") == "val1"
         assert vault2.retrieve("key2") == "val2"
@@ -90,7 +90,7 @@ class TestCredentialVault:
         """import_encrypted adds to existing keys."""
         vault = CredentialVault()
         vault.store("existing", "keep")
-        exported = CredentialVault()
+        exported = CredentialVault(master_key=vault.master_key)
         exported.store("new", "value")
         vault.import_encrypted(exported.export_encrypted())
         assert vault.retrieve("existing") == "keep"

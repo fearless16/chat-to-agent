@@ -140,8 +140,8 @@ class TestComputeMaxAgents:
         res = self._res(ram=100.0, cores=999_999)
         result = self.scheduler.compute_max_agents(res)
         # floor((100-2)/1.5) = 65, cores*2 = 1,999,998, browser=10, provider=20, configured=20
-        # min = 20
-        assert result == 20
+        # min(65, 1999998, 10, 20, 20) = 10
+        assert result == 10
 
     def test_custom_avg_ram(self):
         """With avg_ram=3.0, floor((10-2)/3.0)=2."""
