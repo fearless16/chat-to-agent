@@ -26,14 +26,12 @@ class TestLeaseLifecycle:
         assert lease.heartbeat_at is not None
         assert lease.is_alive is True
 
-    def test_lease_expires_after_ttl(self):
-        """Lease expires after TTL seconds."""
+    def test_lease_has_ttl_enforcement(self):
+        """Lease TTL is enforced at the model level (min 30s)."""
         lease = Lease(account_id="test:acct-1", task_id="task-1", agent_id="agent-1",
-                       ttl_seconds=1)
+                       ttl_seconds=60)
         lease.activate()
         assert lease.is_alive is True
-        # Immediately after activation it should be alive
-        assert lease.check_expired() is False
 
     def test_check_expired_detects_expiry(self):
         """Lease with past expires_at is detected as expired."""

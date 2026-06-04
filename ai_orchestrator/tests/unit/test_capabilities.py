@@ -1,5 +1,7 @@
 """Tests for the Provider capability model."""
 
+import pytest
+
 from ai_orchestrator.models.capabilities import (
     CapabilityVector,
     PROVIDER_PROFILES,
@@ -18,10 +20,10 @@ class TestCapabilityVector:
         assert v.multimodality == 0.0
         assert v.long_context == 0.3
 
-    def test_values_clamped(self):
-        """Values outside [0, 1] raise validation error."""
-        v = CapabilityVector(reasoning=1.5)  # should clamp or raise
-        assert v.reasoning <= 1.0
+    def test_values_out_of_range_rejected(self):
+        """Values outside [0, 1] are rejected by Pydantic."""
+        with pytest.raises(Exception):
+            CapabilityVector(reasoning=1.5)
 
     def test_high_capability_provider(self):
         """DeepSeek has highest reasoning and coding scores."""

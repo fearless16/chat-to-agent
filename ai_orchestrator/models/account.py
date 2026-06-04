@@ -61,6 +61,8 @@ class Account(BaseModel):
         if self.state == AccountState.COOLDOWN:
             if self.cooldown_until and datetime.now(timezone.utc) < self.cooldown_until:
                 return False
+            # Cooldown expired — treat as available
+            return True
         return self.state in (AccountState.IDLE, AccountState.WARMUP)
 
     def record_success(self, latency_ms: float = 0.0) -> None:
@@ -82,10 +84,10 @@ class Account(BaseModel):
         self.health_score = max(0.0, self.health_score - 0.15)
         self._update_latency(latency_ms)
 
-        if self.consecutive_failures >= 3:
-            self._enter_cooldown(timedelta(minutes=5))
-        elif self.consecutive_failures >= 5:
+        if self.consecutive_failures >= 5:
             self.state = AccountState.JAIL
+        elif self.consecutive_failures >= 3:
+            self._enter_cooldown(timedelta(minutes=5))
 
     def record_rate_limit(self) -> None:
         """Handle rate-limit event."""

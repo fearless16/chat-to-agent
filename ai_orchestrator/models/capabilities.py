@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class CapabilityVector(BaseModel):
@@ -52,7 +52,7 @@ class ProviderCapabilities(BaseModel):
 # Pre-defined capability profiles matching the architecture doc's capability table
 PROVIDER_PROFILES: dict[str, ProviderCapabilities] = {
     "chatgpt_api": ProviderCapabilities(
-        provider_name="chatgpt",
+        provider_name="chatgpt_api",
         transport="API",
         capabilities=CapabilityVector(
             reasoning=0.9, coding=0.85, translation=0.8,
@@ -65,7 +65,7 @@ PROVIDER_PROFILES: dict[str, ProviderCapabilities] = {
         supports_tools=True,
     ),
     "chatgpt_ui": ProviderCapabilities(
-        provider_name="chatgpt",
+        provider_name="chatgpt_ui",
         transport="BROWSER",
         capabilities=CapabilityVector(
             reasoning=0.85, coding=0.8, translation=0.75,
