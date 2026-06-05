@@ -21,6 +21,7 @@ Layout on disk (created on first use)::
 """
 
 from ai_orchestrator.workspace.artifacts import Artifact, ArtifactKind, ArtifactStore
+from ai_orchestrator.workspace.ast_patch import ASTPatchEngine, Patch, PatchError, PatchResult
 from ai_orchestrator.workspace.exceptions import (
     AtomicWriteError,
     GitConflictError,
@@ -53,6 +54,10 @@ __all__ = [
     "ArtifactStore",
     "Artifact",
     "ArtifactKind",
+    "ASTPatchEngine",
+    "Patch",
+    "PatchError",
+    "PatchResult",
     "GitWorkspace",
     "CommitInfo",
     "FileStatus",

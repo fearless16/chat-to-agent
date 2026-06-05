@@ -20,21 +20,39 @@ class ProviderResponse(BaseModel):
     success: bool = Field(default=True)
     error: Optional[str] = Field(default=None)
 
+    @property
+    def is_valid(self) -> bool:
+        """Quick validity check — non-empty content and no error."""
+        return self.success and bool(self.content and self.content.strip())
+
 
 class ProviderAdapter(ABC):
-    """Abstract interface with circuit breaker integration."""
+    """Abstract interface with circuit breaker integration.
+
+    Supports optional **response validation** (per V6 architecture
+    Response Validation pipeline).  When ``validate_responses`` is
+    ``True``, ``protected_send`` passes the response through a
+    ``ResponseValidator`` before returning it.
+    """
 
     provider_name: str = ""
     supports_streaming: bool = False
     supports_tools: bool = False
 
-    def __init__(self) -> None:
+    def __init__(self, validate_responses: bool = False) -> None:
         self._circuit_breaker = CircuitBreaker(
             failure_threshold=3,
             recovery_timeout_ms=60_000,
             half_open_max_calls=1,
         )
         self._call_count = 0
+        self._validate_responses = validate_responses
+        self._validator: Optional["ResponseValidator"] = None  # noqa: F821
+
+    def _lazy_init_validator(self) -> None:
+        if self._validator is None and self._validate_responses:
+            from ai_orchestrator.validation.validator import ResponseValidator
+            self._validator = ResponseValidator()
 
     @abstractmethod
     async def send(
@@ -45,7 +63,7 @@ class ProviderAdapter(ABC):
     async def protected_send(
         self, prompt: str, context: Optional[list[dict]] = None
     ) -> ProviderResponse:
-        """Send with circuit breaker — opens after 3 failures.
+        """Send with circuit breaker + optional response validation.
 
         Success and failure accounting is owned by
         :meth:`CircuitBreaker.call`, which records exactly one success or
@@ -53,12 +71,28 @@ class ProviderAdapter(ABC):
         ``record_success`` / ``record_failure`` itself; doing so would
         double-count every failure and trip the breaker after a single
         real failure.
+
+        When ``validate_responses`` is enabled, the response is checked
+        by the ResponseValidator pipeline (Level 1 deterministic checks
+        always; Level 2 DeepSeek review if score < 1.0).
         """
         self._call_count += 1
+        self._lazy_init_validator()
         try:
-            return await self._circuit_breaker.call(
+            response = await self._circuit_breaker.call(
                 self.send, prompt, context=context
             )
+            if self._validator and response.success:
+                validation = await self._validator.validate(
+                    response, prompt=prompt,
+                )
+                if not validation.passed:
+                    return ProviderResponse(
+                        success=False,
+                        error=f"Validation failed: {validation.errors[0].message if validation.errors else 'unknown'}",
+                        latency_ms=response.latency_ms,
+                    )
+            return response
         except Exception as e:
             # ``CircuitBreaker.call`` already recorded the failure; we
             # only need to convert the exception into a normalised

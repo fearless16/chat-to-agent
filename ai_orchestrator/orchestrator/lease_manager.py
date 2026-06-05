@@ -1,34 +1,58 @@
 """LeaseManager — account pool management and lease lifecycle.
 
 Manages a pool of provider accounts, grants leases to agents for exclusive
-account access, handles heartbeat-based expiry, and reclamation of expired
-leases.
+account access, handles heartbeat-based expiry, reclamation of expired
+leases, and **reactive account events** that propagate account state
+changes (e.g. JAIL) to force-expire leases and trigger workflow replan.
+
+Reactive event flow (per V6 architecture):
+
+    Account → JAIL → Lease Manager → Force Expire Lease → Workflow → REPLAN
 """
 
 from __future__ import annotations
 
+import logging
 import threading
+from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Optional
+from typing import Callable, Optional
 
 from ai_orchestrator.models.account import Account, AccountState
 from ai_orchestrator.models.lease import Lease, LeaseState
+
+log = logging.getLogger(__name__)
 
 
 class NoAvailableAccount(Exception):
     """Raised when no account is available to grant a lease."""
 
 
+@dataclass
+class AccountEvent:
+    """An event emitted when an account changes state."""
+    account_id: str
+    provider: str
+    old_state: Optional[AccountState]
+    new_state: AccountState
+    lease_id: Optional[str] = None
+
+
+AccountEventHandler = Callable[[AccountEvent], None]
+
+
 class LeaseManager:
     """Manages account registration and the lease lifecycle.
 
     Thread-safe: all public mutating methods acquire ``self._lock``.
+    Supports reactive event handlers that fire on account state changes.
     """
 
     def __init__(self) -> None:
         self._accounts: dict[str, Account] = {}
         self._leases: dict[str, Lease] = {}
         self._lock = threading.Lock()
+        self._event_handlers: list[AccountEventHandler] = []
 
     # ------------------------------------------------------------------
     # Account registration
@@ -222,19 +246,82 @@ class LeaseManager:
 
         If the account has an active lease that lease is expired as well
         (via the lease's own ``expire()`` API, not by mutating
-        ``lease.state`` directly).  Silently returns if *account_id* is
-        not found.
+        ``lease.state`` directly).  Emits an ``AccountEvent`` so the
+        workflow engine can react (e.g. REPLAN).
+
+        Silently returns if *account_id* is not found.
         """
         with self._lock:
             account = self._accounts.get(account_id)
             if account is None:
                 return
+            old_state = account.state
             account.state = state
 
-            # Also expire any active lease for this account
+            expired_leases = []
             for lease in self._leases.values():
                 if lease.account_id == account_id and lease.state == LeaseState.ACTIVE:
                     lease.expire()
+                    expired_leases.append(lease.id)
+
+        # Emit outside the lock
+        if old_state != state:
+            event = AccountEvent(
+                account_id=account_id,
+                provider=account.provider,
+                old_state=old_state,
+                new_state=state,
+                lease_id=expired_leases[0] if expired_leases else None,
+            )
+            self._emit(event)
+
+    # ------------------------------------------------------------------
+    # Reactive account events (V6 architecture)
+    # ------------------------------------------------------------------
+
+    def on_account_event(self, handler: AccountEventHandler) -> None:
+        """Register a callback that fires on every account state change.
+
+        Handlers receive an ``AccountEvent`` and are called *outside*
+        the lock so they can safely call back into the manager.
+        """
+        self._event_handlers.append(handler)
+
+    def _emit(self, event: AccountEvent) -> None:
+        for handler in self._event_handlers:
+            try:
+                handler(event)
+            except Exception:
+                log.exception("Account event handler failed for %s", event.account_id)
+
+    def force_expire_leases_for_account(self, account_id: str) -> list[str]:
+        """Force-expire all active leases for a given account.
+
+        Returns the list of expired lease ids.  Used by the reactive
+        event system when an account enters JAIL.
+        """
+        expired: list[str] = []
+        with self._lock:
+            for lease in list(self._leases.values()):
+                if lease.account_id == account_id and lease.state == LeaseState.ACTIVE:
+                    lease.expire()
+                    expired.append(lease.id)
+                    log.info("Force-expired lease %s for account %s", lease.id, account_id)
+        return expired
+
+    def account_jailed(self, account_id: str) -> list[str]:
+        """Handle an account entering JAIL state (reactive).
+
+        Force-expires all active leases for the account so the workflow
+        engine can replan.  Returns force-expired lease ids.
+        """
+        expired = self.force_expire_leases_for_account(account_id)
+        if expired:
+            log.warning(
+                "Account %s entered JAIL — force-expired %d lease(s)",
+                account_id, len(expired),
+            )
+        return expired
 
     # ------------------------------------------------------------------
     # Pool statistics

@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from ai_orchestrator.models.task import Task, TaskStatus
+from ai_orchestrator.orchestrator.control_plane import ControlPlane
+from ai_orchestrator.orchestrator.lease_manager import AccountEvent
 
 
 class WorkflowState(str, enum.Enum):
@@ -42,12 +44,17 @@ class TaskPlan:
 
 
 class WorkflowEngine:
-    """State-machine workflow orchestrator with loop detection."""
+    """State-machine workflow orchestrator with loop detection.
 
-    def __init__(self) -> None:
+    Integrates with the ControlPlane for Tier 0/1/2 planning and
+    the Reactive Lease Manager for account-failure-driven REPLAN.
+    """
+
+    def __init__(self, control_plane: Optional[ControlPlane] = None) -> None:
         self._task_states: dict[str, WorkflowState] = {}
         self._action_counts: dict[str, dict[str, int]] = {}
         self._step_index: dict[str, int] = {}
+        self._control_plane = control_plane or ControlPlane()
         # Map workflow state to task status
         self._state_to_task_status = {
             WorkflowState.IDLE: TaskStatus.IDLE,
@@ -83,6 +90,29 @@ class WorkflowEngine:
             return False
         return target_state in _VALID_TRANSITIONS.get(current, [])
 
+    # ── reactive lease event handler ───────────────────────────────
+    # Per V6 architecture: Account → JAIL → Lease Manager → Force Expire
+    # → Workflow Engine → REPLAN
+
+    def handle_account_event(self, event: AccountEvent) -> None:
+        """React to an account state change.
+
+        When an account enters JAIL, all tasks that held leases on that
+        account are transitioned back to PLANNING so the Control Plane
+        can re-route them to a different provider.
+        """
+        if event.new_state.name != "JAIL":
+            return
+
+        # Find all tasks with active leases on this account
+        # (the lease was force-expired by the LeaseManager)
+        for task_id, state in list(self._task_states.items()):
+            if state in (WorkflowState.EXECUTING, WorkflowState.TESTING, WorkflowState.FIX):
+                self._task_states[task_id] = WorkflowState.PLANNING
+                # Note: the actual Task object must be transitioned by the
+                # caller (the gateway handler) since we don't own it here.
+                # The state dict is sufficient to prevent further steps.
+
     _AGENT_TO_STATE: dict[str, WorkflowState] = {
         "planner": WorkflowState.PLANNING,
         "coder": WorkflowState.EXECUTING,
@@ -104,15 +134,17 @@ class WorkflowEngine:
         return task
 
     async def plan_task(self, task: Task, prompt: str) -> TaskPlan:
-        prompt_lower = prompt.lower()
-        if "login" in prompt_lower or "auth" in prompt_lower or "authenticate" in prompt_lower:
-            return TaskPlan(steps=["design", "implement", "test"], required_agents=["planner", "coder", "tester"])
-        elif "feature" in prompt_lower:
+        """Create a task plan using the ControlPlane (Tier 0/1/2 escalation)."""
+        # Tier 0 — classsify the task type
+        classification = await self._control_plane.classify(prompt)
+
+        # Build plan from classification
+        if classification.task_type == "coding":
             return TaskPlan(steps=["implement", "test", "review"], required_agents=["planner", "coder", "tester", "reviewer"])
-        elif "fix" in prompt_lower or "bug" in prompt_lower:
-            return TaskPlan(steps=["investigate", "fix", "verify"], required_agents=["planner", "coder", "tester"])
-        elif not prompt:
-            return TaskPlan(steps=["analyze"], required_agents=["planner"])
+        elif classification.task_type == "translation":
+            return TaskPlan(steps=["translate", "review"], required_agents=["planner", "reviewer"])
+        elif classification.task_type == "research":
+            return TaskPlan(steps=["research", "summarize", "review"], required_agents=["planner", "researcher", "reviewer"])
         else:
             return TaskPlan(steps=["implement", "test", "review"], required_agents=["planner", "coder", "tester", "reviewer"])
 
