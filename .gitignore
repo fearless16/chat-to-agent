@@ -58,6 +58,9 @@ data/
 *.db
 *.sqlite3
 
+# Agent task workspaces (per-task file trees, generated at runtime)
+workspaces/
+
 # Playwright browser binaries
 ms-playwright/
 
