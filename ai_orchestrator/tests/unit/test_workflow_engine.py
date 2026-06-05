@@ -175,7 +175,9 @@ class TestExecuteStep:
         assert engine.handle_loop_detection(task, action_hash) is True
 
         # Now execute should return False and halt
-        result = await engine.execute_step(task, "flaky_step", "coder")
+        result = await engine.execute_step(
+            task, "flaky_step", "coder", action_hash=action_hash
+        )
         assert result is False
         assert task.status == TaskStatus.HALTED
 
@@ -364,7 +366,7 @@ class TestFullLifecycle:
             engine.handle_loop_detection(task, action_hash)
 
         step = engine.get_next_step(task, plan)
-        result = await engine.execute_step(task, step, "coder")
+        result = await engine.execute_step(task, step, "coder", action_hash=action_hash)
         assert result is False
         assert task.status == TaskStatus.HALTED
 

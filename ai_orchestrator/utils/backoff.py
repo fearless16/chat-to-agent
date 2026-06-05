@@ -2,6 +2,7 @@
 
 import asyncio
 import random
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, TypeVar
@@ -37,6 +38,23 @@ class RetryConfig:
     max_delay_ms: float = 60_000.0
     jitter: bool = True
     multiplier: float = 2.0
+
+    def compute_delay_ms(self, attempt: int) -> float:
+        """Return the (capped) delay in ms for *attempt* (0-based).
+
+        When ``jitter`` is enabled, applies *decorrelated* jitter: the
+        final sleep is in ``[base * mult**attempt, 2 * base * mult**attempt)``
+        (capped at ``max_delay_ms``).  This avoids the "thundering herd"
+        where many clients retry on the exact same schedule after a
+        shared failure.
+        """
+        delay_ms = min(
+            self.base_delay_ms * (self.multiplier**attempt),
+            self.max_delay_ms,
+        )
+        if self.jitter:
+            delay_ms = delay_ms + random.uniform(0, delay_ms)
+        return delay_ms
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -84,12 +102,7 @@ async def retry_with_backoff(
             if attempt == cfg.max_retries:
                 raise
 
-            delay_ms = min(
-                cfg.base_delay_ms * (cfg.multiplier**attempt),
-                cfg.max_delay_ms,
-            )
-            if cfg.jitter:
-                delay_ms = random.uniform(0, delay_ms)
+            delay_ms = cfg.compute_delay_ms(attempt)
 
             if on_retry is not None:
                 await on_retry(exc, attempt + 1, delay_ms)
@@ -144,7 +157,12 @@ class CircuitBreaker:
         self._failure_count = 0
         self._last_failure_time: float | None = None
         self._half_open_used = 0
+        # Coroutine-side lock for HALF_OPEN probe-slot accounting.
         self._half_open_lock = asyncio.Lock()
+        # Thread-side lock: protects every read-modify-write of the
+        # circuit state so concurrent record_success/record_failure
+        # calls (e.g. from worker threads) cannot race.
+        self._state_lock = threading.Lock()
 
     # -- properties -----------------------------------------------------------
 
@@ -167,9 +185,10 @@ class CircuitBreaker:
         Resets the consecutive-failure counter and transitions to CLOSED if
         currently HALF_OPEN.
         """
-        self._failure_count = 0
-        if self._state == "HALF_OPEN":
-            self._state = "CLOSED"
+        with self._state_lock:
+            self._failure_count = 0
+            if self._state == "HALF_OPEN":
+                self._state = "CLOSED"
 
     def record_failure(self) -> None:
         """Record a failed call.
@@ -177,10 +196,11 @@ class CircuitBreaker:
         Increments the consecutive-failure counter.  When the counter reaches
         *failure_threshold* the circuit transitions to OPEN.
         """
-        self._failure_count += 1
-        self._last_failure_time = time.monotonic()
-        if self._failure_count >= self._failure_threshold:
-            self._state = "OPEN"
+        with self._state_lock:
+            self._failure_count += 1
+            self._last_failure_time = time.monotonic()
+            if self._failure_count >= self._failure_threshold:
+                self._state = "OPEN"
 
     # -- async call -----------------------------------------------------------
 
@@ -229,14 +249,15 @@ class CircuitBreaker:
 
     def _maybe_transition_to_half_open(self) -> None:
         """If the recovery timeout has elapsed, move from OPEN to HALF_OPEN."""
-        if (
-            self._state == "OPEN"
-            and self._last_failure_time is not None
-        ):
-            elapsed_ms = (time.monotonic() - self._last_failure_time) * 1000.0
-            if elapsed_ms >= self._recovery_timeout_ms:
-                self._state = "HALF_OPEN"
-                self._half_open_used = 0
+        with self._state_lock:
+            if (
+                self._state == "OPEN"
+                and self._last_failure_time is not None
+            ):
+                elapsed_ms = (time.monotonic() - self._last_failure_time) * 1000.0
+                if elapsed_ms >= self._recovery_timeout_ms:
+                    self._state = "HALF_OPEN"
+                    self._half_open_used = 0
 
     async def _sync_state(self) -> None:
         """Evaluate time-based state transitions before dispatching a call."""

@@ -23,7 +23,6 @@ class QwenAPIAdapter(ProviderAdapter):
     async def send(
         self, prompt: str, context: Optional[list[dict]] = None
     ) -> ProviderResponse:
-        self._call_count += 1
         return ProviderResponse(
             content=f"Qwen API response to: {prompt[:50]}",
             model=self.model,

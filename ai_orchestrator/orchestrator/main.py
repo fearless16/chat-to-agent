@@ -151,12 +151,40 @@ async def submit_task(req: SubmitTaskRequest) -> TaskResponse:
     task = Task(prompt=req.prompt, priority=req.priority, type=req.task_type)
     _active_tasks[task.id] = task
 
+    # Pre-select a provider via the capability router so the lease
+    # request that follows is scored against actual provider fit, not
+    # the previous "highest health_score wins" heuristic.  If no account
+    # satisfies the context-length / capability requirements the
+    # ``request_lease`` call later will surface the problem.
+    preferred = _select_preferred_provider(req)
+    task.assigned_agent = "planner"
+    if preferred is not None:
+        task.assigned_account_id = preferred
+
     # Start workflow
     await workflow_engine.start_task(task)
     plan = await workflow_engine.plan_task(task, req.prompt)
     task.current_step = plan.steps[0] if plan.steps else ""
 
     return _task_to_response(task)
+
+
+def _select_preferred_provider(req: SubmitTaskRequest) -> str | None:
+    """Use the :class:`ProviderRouter` to pick a preferred provider for *req*.
+
+    Returns the ``provider_name`` of the highest-scoring account (or
+    ``None`` if no account can satisfy the context-length requirement).
+    """
+    requirements = TaskRequirements(
+        context_length=req.context_length,
+        requires_reasoning=True,
+        requires_coding=False,
+    )
+    accounts = lease_manager.list_accounts()
+    if not accounts:
+        return None
+    selected = provider_router.select_account(accounts, requirements)
+    return selected.provider if selected is not None else None
 
 
 @app.get("/tasks", response_model=list[TaskResponse])

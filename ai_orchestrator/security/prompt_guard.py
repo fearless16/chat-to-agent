@@ -91,6 +91,10 @@ class PromptGuard:
     }
 
     # Score threshold above which ``safe`` becomes ``False``.
+    # With the current per-pattern weights (0.5–0.9) a *single* match
+    # already pushes the cumulative score above this threshold, so
+    # any flagged pattern is treated as unsafe.  Lower this only if
+    # you also lower the per-pattern weights.
     _RISK_THRESHOLD: ClassVar[float] = 0.3
 
     def __init__(self) -> None:

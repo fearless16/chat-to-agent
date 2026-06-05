@@ -92,7 +92,12 @@ class ContextManager:
         """Return the most recent entries fitting within *max_tokens*.
 
         Walks newest-first and stops when adding the next entry would exceed
-        the budget.  Always returns at least the newest entry.
+        the budget.  The newest HOT entry is always returned even if it
+        alone exceeds the budget — callers that need a strict cap should
+        use :meth:`trim_to_budget` first.
+
+        WARM entries are always included (they are summaries) and their
+        tokens count against the budget.
         """
         if not self._hot:
             return list(self._warm) if self._warm else []
@@ -192,6 +197,18 @@ class ContextManager:
     def clear_hot(self) -> None:
         """Remove all HOT entries (WARM and COLD are preserved)."""
         self._hot.clear()
+
+    async def trim_to_budget(self, max_hot_tokens: int | None = None) -> int:
+        """Move oldest HOT entries to WARM until HOT ≤ *max_hot_tokens*.
+
+        Defaults to the manager's configured ``max_hot_tokens``.  Returns
+        the number of entries moved.  Does **not** touch WARM or COLD
+        storage (use :meth:`offload_to_cold` for that).
+        """
+        limit = max_hot_tokens if max_hot_tokens is not None else self._max_hot_tokens
+        if limit < 1:
+            return 0
+        return await self.compress_to_warm(threshold_tokens=limit)
 
     def get_stats(self) -> dict[str, Any]:
         """Return a snapshot of current memory statistics."""

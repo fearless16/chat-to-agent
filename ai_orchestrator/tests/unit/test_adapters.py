@@ -69,10 +69,16 @@ class TestChatGPTAPIAdapter:
 
     @pytest.mark.asyncio
     async def test_rate_limited_after_many_calls(self):
+        """``is_rate_limited`` flips to ``True`` after exceeding the call budget.
+
+        Uses ``protected_send`` (the production path that owns
+        ``_call_count`` accounting) — calling ``send`` directly bypasses
+        the counter and would never trip the limiter.
+        """
         adapter = ChatGPTAPIAdapter()
         assert await adapter.is_rate_limited() is False
         for _ in range(51):
-            await adapter.send("test")
+            await adapter.protected_send("test")
         assert await adapter.is_rate_limited() is True
 
     def test_provider_name(self):

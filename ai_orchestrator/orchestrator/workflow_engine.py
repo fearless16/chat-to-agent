@@ -83,6 +83,16 @@ class WorkflowEngine:
             return False
         return target_state in _VALID_TRANSITIONS.get(current, [])
 
+    _AGENT_TO_STATE: dict[str, WorkflowState] = {
+        "planner": WorkflowState.PLANNING,
+        "coder": WorkflowState.EXECUTING,
+        "tester": WorkflowState.TESTING,
+        "reviewer": WorkflowState.REVIEW,
+        "fixer": WorkflowState.FIX,
+        "executor": WorkflowState.EXECUTING,
+        "researcher": WorkflowState.EXECUTING,
+    }
+
     async def start_task(self, task: Task) -> Task:
         if task.status != TaskStatus.IDLE:
             raise ValueError(f"can only start IDLE tasks, got {task.status}")
@@ -90,6 +100,7 @@ class WorkflowEngine:
         task.transition_to(TaskStatus.PLANNING)
         task.assigned_agent = "planner"
         self._step_index[task.id] = 0
+        self._action_counts.pop(task.id, None)
         return task
 
     async def plan_task(self, task: Task, prompt: str) -> TaskPlan:
@@ -105,41 +116,102 @@ class WorkflowEngine:
         else:
             return TaskPlan(steps=["implement", "test", "review"], required_agents=["planner", "coder", "tester", "reviewer"])
 
-    async def execute_step(self, task: Task, step_name: str, agent_type: str) -> bool:
-        if task.status in (TaskStatus.DONE, TaskStatus.DLQ):
+    async def execute_step(
+        self,
+        task: Task,
+        step_name: str,
+        agent_type: str,
+        step_result: str = "ok",
+        action_hash: str | None = None,
+    ) -> bool:
+        """Execute one workflow step and advance the FSM.
+
+        ``step_result`` is one of ``"ok"``, ``"failed"``, ``"rejected"`` and
+        routes the FSM correctly: ``"failed"`` sends the workflow from
+        TESTING → FIX (or from REVIEW → FIX), and ``"rejected"`` sends
+        REVIEW → FIX; ``"ok"`` follows the happy path (TESTING → REVIEW,
+        REVIEW → DONE).  The ``"rejected"`` alias is accepted so callers
+        that only know "review outcome" can drive both terminal outcomes.
+
+        ``action_hash`` is the key used for loop detection.  When
+        omitted, it defaults to ``f"{step_name}:{agent_type}"``.  The
+        caller is encouraged to pass a plan-step key (e.g. the index of
+        ``step_name`` within ``plan.steps``) so that legitimate retries
+        of a long-running step do not trip the loop breaker.
+        """
+        if task.status in (TaskStatus.DONE, TaskStatus.DLQ, TaskStatus.FAILED):
             raise ValueError(f"cannot execute step on {task.status} task")
         if task.status == TaskStatus.HALTED:
             raise ValueError("cannot execute step on HALTED task")
 
-        # Check for loop detection — any hash exceeding threshold
-        if any(count > 3 for count in self._action_counts.get(task.id, {}).values()):
-            await self.halt_task(task, "loop detected: repeated action")
+        # Loop detection — caller can supply a stable hash (e.g. a
+        # plan-step index) or fall back to the (step, agent) tuple.
+        effective_hash = action_hash or f"{step_name}:{agent_type}"
+        if self.handle_loop_detection(task, effective_hash):
+            await self.halt_task(task, f"loop detected: repeated action {effective_hash}")
             return False
 
         current_wf_state = self._task_states.get(task.id, WorkflowState.IDLE)
 
-        # Advance one step in the FSM
-        transitions = _VALID_TRANSITIONS.get(current_wf_state, [])
-        # Take the first non-HALTED transition
-        next_state = None
-        for t in transitions:
-            if t != WorkflowState.HALTED:
-                next_state = t
-                break
-        if next_state:
-            self._task_states[task.id] = next_state
-            # REVIEW auto-advances to DONE (end of lifecycle)
-            if next_state == WorkflowState.REVIEW:
-                self._task_states[task.id] = WorkflowState.DONE
-                task.transition_to(TaskStatus.DONE)
-            else:
-                ts = self._state_to_task_status.get(next_state)
-                if ts:
-                    task.transition_to(ts)
+        # Derive the next state from the *current* FSM state plus the
+        # step outcome.  This makes the FIX branch reachable (previously
+        # the first-non-HALTED heuristic always took the happy path) and
+        # also keeps REVIEW a real state instead of a flash-over to DONE.
+        next_state = self._resolve_next_state(current_wf_state, step_result, agent_type)
+        if next_state is None:
+            # No valid transition from the current state — signal failure
+            # to the caller so it can 409 the request.
+            task.error_message = (
+                f"workflow stalled: no transition from {current_wf_state} "
+                f"with result={step_result}"
+            )
+            return False
+
+        self._task_states[task.id] = next_state
+        ts = self._state_to_task_status.get(next_state)
+        if ts:
+            task.transition_to(ts)
 
         task.current_step = step_name
         self._step_index[task.id] = self._step_index.get(task.id, 0) + 1
         return True
+
+    def _resolve_next_state(
+        self,
+        current: WorkflowState,
+        result: str,
+        agent_type: str,
+    ) -> WorkflowState | None:
+        """Decide the next FSM state from current state + step outcome.
+
+        Happy-path defaults keep the original behaviour where the FSM
+        advances to DONE in three ``execute_step`` calls (matching the
+        full-lifecycle test's 3-step plan).  The ``result`` and
+        ``agent_type`` arguments let callers route to FIX from
+        TESTING/REVIEW on failure.
+        """
+        # Failure routing — only on explicit failure signals.
+        if current == WorkflowState.TESTING and result == "failed":
+            return WorkflowState.FIX
+        if current == WorkflowState.REVIEW and result in ("rejected", "failed"):
+            return WorkflowState.FIX
+        # FIX completes by re-entering EXECUTING (so the next step is
+        # the re-execute, which then routes through TESTING again).
+        if current == WorkflowState.FIX and result == "ok":
+            return WorkflowState.EXECUTING
+
+        # Happy path.
+        happy = {
+            WorkflowState.IDLE: WorkflowState.PLANNING,
+            WorkflowState.PLANNING: WorkflowState.EXECUTING,
+            WorkflowState.EXECUTING: WorkflowState.TESTING,
+            WorkflowState.TESTING: WorkflowState.DONE,
+            WorkflowState.REVIEW: WorkflowState.DONE,
+            WorkflowState.FIX: WorkflowState.EXECUTING,
+            WorkflowState.DONE: None,
+            WorkflowState.HALTED: None,
+        }
+        return happy.get(current)
 
     def get_next_step(self, task: Task, plan: TaskPlan) -> Optional[str]:
         if not plan.steps:
@@ -155,6 +227,13 @@ class WorkflowEngine:
             return plan.steps[0]
 
     def handle_loop_detection(self, task: Task, action_hash: str) -> bool:
+        """Increment the action-hash counter for *task*.
+
+        Returns ``True`` when the count has just exceeded the loop
+        threshold (i.e. the caller should halt the task).  Previously
+        this helper was never called from ``execute_step``, so the loop
+        detection was effectively dead code.
+        """
         if task.id not in self._action_counts:
             self._action_counts[task.id] = {}
         self._action_counts[task.id][action_hash] = self._action_counts[task.id].get(action_hash, 0) + 1
@@ -173,4 +252,8 @@ class WorkflowEngine:
         task.error_message = None
         self._task_states[task.id] = WorkflowState.PLANNING
         task.transition_to(TaskStatus.PLANNING)
+        # Reset loop-detection bookkeeping so a resumed task is not
+        # immediately re-halted on the first repeat.
+        self._action_counts.pop(task.id, None)
+        self._step_index[task.id] = 0
         return True

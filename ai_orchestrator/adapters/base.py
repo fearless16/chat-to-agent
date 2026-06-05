@@ -45,19 +45,24 @@ class ProviderAdapter(ABC):
     async def protected_send(
         self, prompt: str, context: Optional[list[dict]] = None
     ) -> ProviderResponse:
-        """Send with circuit breaker — opens after 3 failures."""
+        """Send with circuit breaker — opens after 3 failures.
+
+        Success and failure accounting is owned by
+        :meth:`CircuitBreaker.call`, which records exactly one success or
+        failure per call.  ``protected_send`` therefore does NOT call
+        ``record_success`` / ``record_failure`` itself; doing so would
+        double-count every failure and trip the breaker after a single
+        real failure.
+        """
         self._call_count += 1
         try:
-            response = await self._circuit_breaker.call(
+            return await self._circuit_breaker.call(
                 self.send, prompt, context=context
             )
-            if response.success:
-                self._circuit_breaker.record_success()
-            else:
-                self._circuit_breaker.record_failure()
-            return response
         except Exception as e:
-            self._circuit_breaker.record_failure()
+            # ``CircuitBreaker.call`` already recorded the failure; we
+            # only need to convert the exception into a normalised
+            # response shape.
             return ProviderResponse(success=False, error=str(e))
 
     @abstractmethod

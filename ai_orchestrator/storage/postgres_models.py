@@ -137,8 +137,9 @@ async def save_account(session: AsyncSession, account: Account) -> bool:
     Creates or updates the corresponding ``AccountModel`` row and
     commits the transaction. Returns ``True`` on success.
 
-    Raises the underlying exception on database errors (caller is
-    responsible for rollback handling).
+    Uses :meth:`AsyncSession.merge` so the second call for the same
+    primary key is an UPSERT, not an ``IntegrityError`` from the
+    primary-key collision on a plain ``session.add``.
     """
     try:
         model = AccountModel(
@@ -166,7 +167,7 @@ async def save_account(session: AsyncSession, account: Account) -> bool:
             warmup_steps_completed=account.warmup_steps_completed,
             proxy=account.proxy,
         )
-        session.add(model)
+        await session.merge(model)
         await session.commit()
         return True
     except Exception:
@@ -216,9 +217,17 @@ async def save_task(session: AsyncSession, task: Task) -> bool:
     """Persist a :class:`Task` domain model to the database.
 
     Creates or updates the corresponding ``TaskModel`` row and commits.
-    Returns ``True`` on success.
+    Returns ``True`` on success.  Uses :meth:`AsyncSession.merge` for
+    idempotent UPSERT semantics.
     """
+    import json as _json
+
     try:
+        # ``default=str`` keeps NaN / datetime values from blowing up
+        # the JSON encoder (Postgres rejects ``NaN`` in JSONB columns).
+        metadata_json = (
+            _json.dumps(task.metadata, default=str) if task.metadata else None
+        )
         model = TaskModel(
             id=task.id,
             status=task.status.value if isinstance(task.status, TaskStatus) else task.status,
@@ -235,9 +244,9 @@ async def save_task(session: AsyncSession, task: Task) -> bool:
             error_message=task.error_message,
             retry_count=task.retry_count,
             max_retries=task.max_retries,
-            metadata_=__import__("json").dumps(task.metadata) if task.metadata else None,
+            metadata_=metadata_json,
         )
-        session.add(model)
+        await session.merge(model)
         await session.commit()
         return True
     except Exception:

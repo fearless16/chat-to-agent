@@ -158,14 +158,20 @@ class LeaseManager:
 
         Returns ``True`` if the lease was found and is still alive, ``False``
         if the lease does not exist or has already expired.
+
+        The whole lookup + liveness + mutation sequence is performed under
+        ``self._lock`` so that a concurrent ``reclaim_expired`` or
+        ``release_lease`` cannot observe or modify the lease in an
+        inconsistent state.
         """
-        lease = self._leases.get(lease_id)
-        if lease is None:
-            return False
-        if not lease.is_alive:
-            return False
-        lease.heartbeat()
-        return True
+        with self._lock:
+            lease = self._leases.get(lease_id)
+            if lease is None:
+                return False
+            if not lease.is_alive:
+                return False
+            lease.heartbeat()
+            return True
 
     def reclaim_expired(self) -> list[str]:
         """Check all active leases, expire those past deadline.
@@ -214,8 +220,10 @@ class LeaseManager:
     ) -> None:
         """Mark an account as unavailable by setting its state.
 
-        If the account has an active lease that lease is expired as well.
-        Silently returns if *account_id* is not found.
+        If the account has an active lease that lease is expired as well
+        (via the lease's own ``expire()`` API, not by mutating
+        ``lease.state`` directly).  Silently returns if *account_id* is
+        not found.
         """
         with self._lock:
             account = self._accounts.get(account_id)
@@ -226,7 +234,7 @@ class LeaseManager:
             # Also expire any active lease for this account
             for lease in self._leases.values():
                 if lease.account_id == account_id and lease.state == LeaseState.ACTIVE:
-                    lease.state = LeaseState.EXPIRED
+                    lease.expire()
 
     # ------------------------------------------------------------------
     # Pool statistics

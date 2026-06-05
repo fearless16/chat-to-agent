@@ -2,7 +2,12 @@
 
 No Docker dependency.  Python and bash commands are spawned as child processes
 with configurable timeouts.  Memory limits are applied via ``resource`` on
-macOS/Linux (best-effort, not a security boundary).
+Linux (best-effort, not a security boundary).  macOS does not support
+``preexec_fn``; the parameter is accepted but ignored there.
+
+The subprocess environment is built from a minimal whitelist and does NOT
+inherit the parent process environment, so secrets like ``OPENAI_API_KEY``
+or ``AWS_SECRET_ACCESS_KEY`` cannot leak into the sandbox.
 """
 
 from __future__ import annotations
@@ -10,8 +15,15 @@ from __future__ import annotations
 import asyncio
 import os
 import platform
+import signal
+import sys
 import time
 from dataclasses import dataclass
+
+try:
+    import resource  # POSIX-only; absent on Windows.
+except ImportError:  # pragma: no cover
+    resource = None  # type: ignore[assignment]
 
 
 @dataclass
@@ -23,6 +35,10 @@ class SandboxResult:
     return_code: int = -1
     timed_out: bool = False
     duration_ms: float = 0.0
+    truncated: bool = False
+
+
+_MAX_OUTPUT_BYTES = 1_048_576  # 1 MiB cap on stdout+stderr per stream
 
 
 class Sandbox:
@@ -70,13 +86,16 @@ class Sandbox:
         cmd = [self._resolve_python(), "-c", code]
         env = self._build_env(memory_limit_mb, network=network_access)
 
-        return await self._run_process(cmd, env, timeout_ms)
+        return await self._run_process(
+            cmd, env, timeout_ms, memory_limit_mb=memory_limit_mb
+        )
 
     async def execute_bash(
         self,
         command: str,
         timeout_ms: int = 30_000,
         workdir: str | None = None,
+        network_access: bool = False,
     ) -> SandboxResult:
         """Execute a bash *command* in a subprocess.
 
@@ -88,10 +107,14 @@ class Sandbox:
             Maximum wall-clock time in milliseconds.
         workdir:
             Working directory for the subprocess (defaults to CWD of parent).
+        network_access:
+            If ``False`` (default), proxy / no-proxy environment variables are
+            stripped.  This is a best-effort sanitisation; it does not apply
+            OS-level network isolation.
         """
         self._check_not_closed()
         cmd = ["/bin/bash", "-c", command]
-        env = self._build_env(memory_limit_mb=None, network=True)
+        env = self._build_env(memory_limit_mb=None, network=network_access)
         return await self._run_process(cmd, env, timeout_ms, cwd=workdir)
 
     async def check_sandbox_available(self) -> bool:
@@ -136,13 +159,67 @@ class Sandbox:
         memory_limit_mb: int | None,
         network: bool = True,
     ) -> dict[str, str]:
-        """Build a sanitised environment dict."""
-        env = os.environ.copy()
-        env["PYTHONUNBUFFERED"] = "1"
+        """Build a minimal, sanitised environment dict.
+
+        The parent process environment is intentionally NOT inherited, so
+        secrets like ``OPENAI_API_KEY`` cannot leak into the sandbox.  Only
+        a small whitelist of variables needed for a normal subprocess to
+        locate its interpreter and run are forwarded, plus a couple of
+        optional overrides (e.g. ``PYTHONUNBUFFERED``).
+        """
+        env: dict[str, str] = {
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "HOME": os.environ.get("HOME", "/tmp"),
+            "LANG": os.environ.get("LANG", "C.UTF-8"),
+            "LC_ALL": os.environ.get("LC_ALL", "C.UTF-8"),
+            "PYTHONUNBUFFERED": "1",
+            "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
+        }
         if not network:
+            # Best-effort: strip common proxy variables so a child cannot
+            # route around an intended "no network" policy via the parent's
+            # HTTP proxy settings.
+            for key in (
+                "http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY",
+                "no_proxy", "NO_PROXY", "all_proxy", "ALL_PROXY",
+            ):
+                env.pop(key, None)
             env["PYTHONWARNINGS"] = "ignore"
-        # Memory limit is applied via pre_exec below, not env.
         return env
+
+    @staticmethod
+    def _build_preexec(memory_limit_mb: int | None):
+        """Return a ``preexec_fn`` that applies RLIMIT_AS, or ``None``.
+
+        Returns ``None`` on platforms where :mod:`resource` is unavailable
+        (Windows), when no memory limit is requested, or on macOS (where
+        ``RLIMIT_AS`` is not enforced and frequently cannot be lowered
+        below the interpreter's existing virtual-memory footprint).  On
+        Linux this is the cheapest available virtual-memory ceiling; the
+        kernel will SIGKILL the child on breach.
+        """
+        if (
+            memory_limit_mb is None
+            or memory_limit_mb <= 0
+            or resource is None
+            or platform.system() == "Darwin"
+        ):
+            return None
+
+        limit_bytes = int(memory_limit_mb) * 1024 * 1024
+
+        def _preexec() -> None:
+            # RLIMIT_AS is the address-space limit; on Linux it is enforced
+            # and the process is killed with SIGKILL on breach.
+            try:
+                resource.setrlimit(resource.RLIMIT_AS, (limit_bytes, limit_bytes))
+            except (OSError, ValueError):
+                # The interpreter's current virtual-memory footprint may
+                # already exceed the requested cap (e.g. a heavy venv).
+                # Skip silently rather than abort the subprocess start.
+                pass
+
+        return _preexec
 
     async def _run_process(
         self,
@@ -150,37 +227,67 @@ class Sandbox:
         env: dict[str, str],
         timeout_ms: int,
         cwd: str | None = None,
+        memory_limit_mb: int | None = None,
     ) -> SandboxResult:
-        """Spawn a subprocess, enforce timeout, capture output."""
+        """Spawn a subprocess, enforce timeout, capture output.
+
+        Output is capped at ``_MAX_OUTPUT_BYTES`` per stream to prevent
+        trivial memory-exhaustion DoS via a noisy subprocess.  On timeout
+        the entire process group is signalled (so forked children are
+        reaped), not just the immediate child.
+        """
         t0 = time.monotonic()
 
         try:
+            preexec = self._build_preexec(memory_limit_mb)
+            # start_new_session=True puts the child in its own process group
+            # so we can killpg() the whole tree on timeout.  macOS does
+            # not accept preexec_fn, so the memory limit is silently
+            # skipped there (documented limitation).
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 env=env,
                 cwd=cwd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                # macOS does not support preexec_fn; skip resource limit there.
-                # On Linux we would set resource.setrlimit in preexec_fn, but
-                # the assignment says no Docker dependency; memory limiting
-                # via setrlimit is best-effort and skipped on macOS.
+                start_new_session=True,
+                preexec_fn=preexec,
             )
 
             timeout_s = timeout_ms / 1000.0
+            timed_out = False
+            stdout_bytes = b""
+            stderr_bytes = b""
+
             try:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
                     proc.communicate(), timeout=timeout_s
                 )
-                timed_out = False
             except asyncio.TimeoutError:
-                # Kill the process tree.
-                try:
-                    proc.kill()
-                except ProcessLookupError:
-                    pass
-                stdout_bytes, stderr_bytes = await proc.communicate()
                 timed_out = True
+                # Kill the entire process group, not just the immediate
+                # child, so that `bash -c 'sleep 99 & echo done'` does not
+                # leave an orphan sleep behind.
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
+                # Drain the pipes (communicate() can only be awaited once,
+                # so read directly).
+                stdout_bytes, stderr_bytes = await _drain_pipes(proc)
+
+            # Enforce the per-stream output cap (defence against the
+            # 1-GB-print DoS path even if no timeout fired).
+            truncated = False
+            if len(stdout_bytes) > _MAX_OUTPUT_BYTES:
+                stdout_bytes = stdout_bytes[:_MAX_OUTPUT_BYTES]
+                truncated = True
+            if len(stderr_bytes) > _MAX_OUTPUT_BYTES:
+                stderr_bytes = stderr_bytes[:_MAX_OUTPUT_BYTES]
+                truncated = True
 
             duration = (time.monotonic() - t0) * 1000.0
 
@@ -190,6 +297,7 @@ class Sandbox:
                 return_code=proc.returncode if proc.returncode is not None else -1,
                 timed_out=timed_out,
                 duration_ms=round(duration, 2),
+                truncated=truncated,
             )
 
         except FileNotFoundError:
@@ -199,3 +307,19 @@ class Sandbox:
                 return_code=127,
                 duration_ms=round(duration, 2),
             )
+
+
+async def _drain_pipes(proc: asyncio.subprocess.Process) -> tuple[bytes, bytes]:
+    """Read remaining stdout/stderr after kill.  Returns ``(b"", b"")`` on error."""
+    try:
+        out, err = await asyncio.gather(
+            proc.stdout.read() if proc.stdout else _empty(),
+            proc.stderr.read() if proc.stderr else _empty(),
+        )
+        return out or b"", err or b""
+    except Exception:  # pragma: no cover
+        return b"", b""
+
+
+async def _empty() -> bytes:
+    return b""

@@ -108,14 +108,20 @@ class Account(BaseModel):
             self.avg_latency_samples = n + 1
 
     def mark_idle(self) -> None:
-        """Return account to idle pool."""
+        """Return account to idle pool.
+
+        Unconditional: clears cooldown, consecutive-failure counter,
+        and health state so a re-pooled account is fully reset.  Use
+        :meth:`mark_jail` for permanent disablement.
+        """
         self.state = AccountState.IDLE
         self.cooldown_until = None
+        self.consecutive_failures = 0
 
     def mark_active(self) -> None:
         """Mark account as in-use."""
         self.state = AccountState.ACTIVE
 
     def mark_jail(self) -> None:
-        """Permanently disable account."""
+        """Permanently disable account (unconditional)."""
         self.state = AccountState.JAIL

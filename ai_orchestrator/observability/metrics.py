@@ -4,6 +4,22 @@ from __future__ import annotations
 
 from prometheus_client import Counter, Gauge, Histogram, generate_latest, registry
 
+#: Bounded set of failure-reason labels.  Anything not in this set is
+#: collapsed to ``"other"`` to keep Prometheus cardinality bounded.
+ALLOWED_FAILURE_REASONS: frozenset[str] = frozenset({
+    "timeout",
+    "rate_limit",
+    "auth",
+    "network",
+    "parse",
+    "provider_5xx",
+    "provider_4xx",
+    "sandbox",
+    "validation",
+    "internal",
+    "unknown",
+})
+
 
 class MetricsRegistry:
     """Application-level Prometheus metric registry.
@@ -79,7 +95,14 @@ class MetricsRegistry:
         self._task_completed.labels(status=status).inc()
 
     def inc_task_failed(self, reason: str = "unknown") -> None:
-        """Increment the task-failure counter."""
+        """Increment the task-failure counter.
+
+        Unrecognized *reason* values are folded into ``"other"`` to keep
+        the Prometheus label cardinality bounded (a runaway free-form
+        error message would otherwise explode the time-series count).
+        """
+        if reason not in ALLOWED_FAILURE_REASONS:
+            reason = "other"
         self._task_failed.labels(reason=reason).inc()
 
     def inc_provider_error(self, provider: str, error_type: str) -> None:

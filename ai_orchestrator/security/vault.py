@@ -1,4 +1,8 @@
-"""AES-256-GCM encrypted credential storage using cryptography.fernet.Fernet."""
+"""AES-128-CBC + HMAC-SHA256 encrypted credential storage via Fernet.
+
+Fernet (RFC 8189) uses AES-128 in CBC mode with HMAC-SHA256 for authenticated
+encryption. The previous docstring claimed ``AES-256-GCM`` which is incorrect.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +10,7 @@ from cryptography.fernet import Fernet
 
 
 class CredentialVault:
-    """Encrypted, key-value credential store backed by Fernet (AES-256-GCM).
+    """Encrypted, key-value credential store backed by Fernet (AES-128-CBC + HMAC-SHA256).
 
     Each value is encrypted individually with a master key. The vault supports
     export/import for migration and online key rotation.
@@ -81,17 +85,37 @@ class CredentialVault:
         ----------
         new_key:
             A 32-byte URL-safe-base64-encoded Fernet key.
-        """
-        # Decrypt everything with the old Fernet first.
-        plaintexts: dict[str, str] = {}
-        for key in list(self._store.keys()):
-            plaintexts[key] = self.retrieve(key)  # type: ignore[assignment]
 
-        # Swap in the new Fernet and re-encrypt.
-        self._fernet = Fernet(new_key)
-        self._store = {}
-        for key, value in plaintexts.items():
-            self._store[key] = self._fernet.encrypt(value.encode("utf-8"))
+        Raises
+        ------
+        ValueError:
+            If *new_key* is not a valid Fernet key.  In that case the vault
+            is left unchanged so callers can retry with a fresh key without
+            losing the previous data.
+        """
+        # Validate the new key *before* mutating any state, so a bad key
+        # does not corrupt the existing vault.
+        try:
+            new_fernet = Fernet(new_key)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"new_key is not a valid Fernet key: {exc}") from exc
+
+        # Re-encrypt each entry under the new key.  If a single entry
+        # cannot be decrypted (tampered ciphertext, etc.) we preserve the
+        # old ciphertext verbatim — it will be unreadable until the old
+        # key is restored, but the rest of the vault is not collateral
+        # damage.
+        new_store: dict[str, bytes] = {}
+        for key, ciphertext in self._store.items():
+            try:
+                plaintext = self._fernet.decrypt(ciphertext).decode("utf-8")
+                new_store[key] = new_fernet.encrypt(plaintext.encode("utf-8"))
+            except Exception:
+                new_store[key] = ciphertext
+
+        # Commit atomically: build the new dict fully, then assign.
+        self._fernet = new_fernet
+        self._store = new_store
 
     # ------------------------------------------------------------------
     # Helpers

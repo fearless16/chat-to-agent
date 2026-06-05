@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from ai_orchestrator.models.task import Task, TaskStatus
 
@@ -47,15 +47,35 @@ class DeadLetterQueue:
     """Manages the dead letter queue — stores, alerts, retries, archives.
 
     Tasks land here after exhausting their max retries (Task.mark_failed → DLQ).
+
+    ``push`` is idempotent per ``task.id``: re-pushing a task that is
+    already in the queue replaces the existing entry (preserving the
+    most recent error and logs) instead of creating a duplicate.  This
+    matches the "at-least-once delivery" assumption the rest of the
+    system makes when reporting failures.
     """
 
     def __init__(self, max_entries: int = 1_000) -> None:
         self._entries: list[DLQEntry] = []
         self._max_entries = max_entries
-        self._alert_callbacks: list[callable] = []
+        self._alert_callbacks: list[Callable[[DLQEntry], None]] = []
 
-    def push(self, task: Task, error: str, provider: str = "", account_id: str = "", logs: Optional[list[dict]] = None) -> DLQEntry:
-        """Add a failed task to the DLQ."""
+    def push(
+        self,
+        task: Task,
+        error: str,
+        provider: str = "",
+        account_id: str = "",
+        logs: Optional[list[dict]] = None,
+    ) -> DLQEntry:
+        """Add (or replace) the failed task entry in the DLQ.
+
+        If a previous entry for the same ``task.id`` exists it is removed
+        first, so the queue never contains duplicate rows for the same
+        task.
+        """
+        # Idempotency: remove any prior entry for this task.
+        self._entries = [e for e in self._entries if e.task_id != task.id]
         entry = DLQEntry(task, error, provider, account_id, logs)
         self._entries.append(entry)
         # Trim oldest if over limit
@@ -86,6 +106,6 @@ class DeadLetterQueue:
     def clear(self) -> None:
         self._entries.clear()
 
-    def register_alert(self, callback: callable) -> None:
+    def register_alert(self, callback: Callable[[DLQEntry], None]) -> None:
         """Register a callback for DLQ alerts (e.g. to Slack, email)."""
         self._alert_callbacks.append(callback)

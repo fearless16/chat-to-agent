@@ -79,6 +79,16 @@ class Lease(BaseModel):
                 return True
         return False
 
+    def expire(self) -> None:
+        """Mark this lease as EXPIRED (idempotent).
+
+        Use this method to transition a lease to the EXPIRED state via
+        the lease's own API rather than mutating ``self.state`` directly,
+        which would bypass any future invariant added here.
+        """
+        if self.state == LeaseState.ACTIVE:
+            self.state = LeaseState.EXPIRED
+
     @property
     def is_alive(self) -> bool:
         """True if the lease is currently valid for use."""

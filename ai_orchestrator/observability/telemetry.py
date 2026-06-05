@@ -7,9 +7,10 @@ from typing import Any, Optional
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import Span, TracerProvider
+from opentelemetry.sdk.trace import Span, Status, StatusCode, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
 
 
 class Telemetry:
@@ -18,6 +19,11 @@ class Telemetry:
     When *otlp_endpoint* is omitted the provider uses an in-memory exporter so
     that spans are never sent to an external collector — ideal for testing or
     single-node deployments.
+
+    The *sample_rate* parameter (0.0–1.0) is wired to a
+    :class:`TraceIdRatioBased` sampler on the underlying
+    :class:`TracerProvider`, so it actually governs which spans are recorded
+    rather than being silently ignored.
     """
 
     def __init__(
@@ -31,7 +37,13 @@ class Telemetry:
         self._sample_rate = sample_rate
 
         resource = Resource.create({"service.name": service_name})
-        self._provider = TracerProvider(resource=resource)
+        # Clamp the rate to the valid range to avoid OpenTelemetry raising
+        # on negative or >1.0 values; fall back to 1.0 on nonsensical input.
+        clamped_rate = max(0.0, min(1.0, sample_rate)) if sample_rate > 0 else 0.0
+        self._provider = TracerProvider(
+            resource=resource,
+            sampler=TraceIdRatioBased(clamped_rate),
+        )
 
         if otlp_endpoint:
             otlp_exporter = OTLPSpanExporter(endpoint=otlp_endpoint)
@@ -89,8 +101,14 @@ class Telemetry:
         exception: BaseException,
         attributes: Optional[dict[str, Any]] = None,
     ) -> None:
-        """Record an exception on *span*."""
+        """Record an exception on *span* and mark the span as ERROR.
+
+        Setting the status to :class:`StatusCode.ERROR` is what surfaces
+        the failure in UIs like Jaeger — without it, a span with an
+        exception event still appears successful.
+        """
         span.record_exception(exception, attributes=attributes or {})
+        span.set_status(Status(StatusCode.ERROR, str(exception)))
 
     async def shutdown(self) -> None:
         """Flush and shut down the tracer provider.

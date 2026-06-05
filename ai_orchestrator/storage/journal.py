@@ -19,7 +19,7 @@ class ExecutionJournal:
 
     Each task gets its own stream (``journal:{task_id}``) so journal
     entries can be read per-task.  Every logged step is also pushed to
-    a global stream (``journal:all``) for cross-cutting queries.
+    a global stream (``journal:all``) for cross-task observability.
 
     Parameters
     ----------
@@ -27,8 +27,17 @@ class ExecutionJournal:
         An active :class:`RedisClient` instance.
     """
 
-    def __init__(self, redis: RedisClient) -> None:
+    #: Hard cap on entries read by bulk operations.  Replay and
+    #: checkpoint-scan use this so a runaway stream cannot OOM the
+    #: process.  Tweak via the constructor in tests if needed.
+    _MAX_BULK_FETCH: int = 1_000_000
+
+    def __init__(self, redis: RedisClient, max_bulk_fetch: int | None = None) -> None:
         self._redis = redis
+        if max_bulk_fetch is not None:
+            if max_bulk_fetch < 1:
+                raise ValueError("max_bulk_fetch must be >= 1")
+            self._MAX_BULK_FETCH = max_bulk_fetch
 
     # ── Public API ───────────────────────────────────────────────────
 
@@ -127,7 +136,9 @@ class ExecutionJournal:
             The task to search.
         """
         # Fetch all entries so we can find the last checkpoint.
-        entries = await self._redis.read_stream(f"journal:{task_id}", count=1_000_000)
+        entries = await self._redis.read_stream(
+            f"journal:{task_id}", count=self._MAX_BULK_FETCH
+        )
         checkpoint: dict[str, Any] | None = None
         for e in entries:
             if e.get("status") == "checkpoint":
@@ -141,7 +152,9 @@ class ExecutionJournal:
 
         This is equivalent to ``get_task_journal`` without a limit.
         """
-        entries = await self._redis.read_stream(f"journal:{task_id}", count=1_000_000)
+        entries = await self._redis.read_stream(
+            f"journal:{task_id}", count=self._MAX_BULK_FETCH
+        )
         return [_deserialize_entry(e) for e in entries]
 
 

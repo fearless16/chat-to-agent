@@ -25,7 +25,6 @@ class LocalLLMAdapter(ProviderAdapter):
     async def send(
         self, prompt: str, context: Optional[list[dict]] = None
     ) -> ProviderResponse:
-        self._call_count += 1
         return ProviderResponse(
             content=f"Local LLM ({self.model}) response to: {prompt[:50]}",
             model=self.model,

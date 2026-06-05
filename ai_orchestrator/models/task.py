@@ -61,10 +61,25 @@ class Task(BaseModel):
     model_config = {"frozen": False, "use_enum_values": True}
 
     def transition_to(self, new_status: TaskStatus) -> None:
-        """Transition task to a new state, updating timestamps."""
+        """Transition task to a new state, updating timestamps.
+
+        Truly terminal states (``DONE``, ``DLQ``) are absorbing: once a
+        task reaches one, no further transitions are accepted.  HALTED is
+        *paused* (not terminal in the strict sense) and the orchestrator
+        resumes out of it via :meth:`WorkflowEngine.resume_task`.  Same-
+        state transitions are idempotent (used by the retry loop when a
+        task is already in DLQ).
+        """
+        if new_status == self.status:
+            return
+        if self.status in (TaskStatus.DONE, TaskStatus.DLQ):
+            raise ValueError(
+                f"task {self.id} is in terminal state {self.status}; "
+                f"cannot transition to {new_status}"
+            )
         self.status = new_status
         self.updated_at = datetime.now(timezone.utc)
-        if new_status in (TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.DLQ):
+        if new_status in (TaskStatus.DONE, TaskStatus.DLQ):
             self.completed_at = datetime.now(timezone.utc)
 
     def mark_failed(self, error: str) -> None:

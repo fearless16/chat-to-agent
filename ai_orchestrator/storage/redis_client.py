@@ -3,10 +3,16 @@
 Provides the same async interface as a real Redis client but stores
 everything in a plain Python dict. Supports key-value ops, streams,
 and list queues.
+
+All public mutating methods take a single :class:`asyncio.Lock` so that
+concurrent coroutines see consistent state.  This is a mock — production
+Redis operations are atomic on the server — but the API contract is
+preserved.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
@@ -23,6 +29,7 @@ class RedisClient:
     - Pub/sub event publishing
     - List (queue) operations with FIFO semantics
     - JSON serialization for dict/list values
+    - Coroutine-safe via a single :class:`asyncio.Lock`
     """
 
     def __init__(self) -> None:
@@ -32,6 +39,7 @@ class RedisClient:
         self._consumer_groups: dict[tuple[str, str], set[str]] = {}  # (group, stream) -> {acked_ids}
         self._events: list[dict[str, Any]] = []  # published events log
         self._counter: int = 0
+        self._lock = asyncio.Lock()
 
     # ── Key-value ops ────────────────────────────────────────────────
 
@@ -42,41 +50,43 @@ class RedisClient:
         """
         serialized = json.dumps(value) if not isinstance(value, str) else value
         expiry = time.time() + ttl if ttl is not None else None
-        self._data[key] = (serialized, expiry)
+        async with self._lock:
+            self._data[key] = (serialized, expiry)
 
     async def get_key(self, key: str) -> str | None:
         """Return the value for *key*, or ``None`` if missing or expired."""
-        entry = self._data.get(key)
-        if entry is None:
-            return None
-        value, expiry = entry
-        if expiry is not None and time.time() > expiry:
-            del self._data[key]
-            return None
-        return value
+        async with self._lock:
+            entry = self._data.get(key)
+            if entry is None:
+                return None
+            value, expiry = entry
+            if expiry is not None and time.time() > expiry:
+                del self._data[key]
+                return None
+            return value
 
     async def delete_key(self, key: str) -> bool:
         """Delete *key*. Returns ``True`` if the key existed and was not expired."""
-        entry = self._data.get(key)
-        if entry is None:
-            return False
-        value, expiry = entry
-        if expiry is not None and time.time() > expiry:
+        async with self._lock:
+            entry = self._data.get(key)
+            if entry is None:
+                return False
+            value, expiry = entry
+            if expiry is not None and time.time() > expiry:
+                del self._data[key]
+                return False
             del self._data[key]
-            return False
-        del self._data[key]
-        return True
+            return True
 
     # ── Stream ops ───────────────────────────────────────────────────
 
     async def push_to_stream(self, stream: str, data: dict[str, Any]) -> str:
         """Push *data* to *stream* and return the auto-generated entry ID."""
-        self._counter += 1
-        entry_id = f"{int(time.time() * 1000)}-{self._counter}"
-        if stream not in self._streams:
-            self._streams[stream] = []
-        self._streams[stream].append((entry_id, data))
-        return entry_id
+        async with self._lock:
+            self._counter += 1
+            entry_id = f"{int(time.time() * 1000)}-{self._counter}"
+            self._streams.setdefault(stream, []).append((entry_id, data))
+            return entry_id
 
     async def read_stream(
         self,
@@ -91,8 +101,9 @@ class RedisClient:
         but is ignored (non-blocking in-memory store always returns
         immediately).
         """
-        entries = self._streams.get(stream, [])
-        return [data for _, data in entries[:count]]
+        async with self._lock:
+            entries = self._streams.get(stream, [])
+            return [data for _, data in entries[:count]]
 
     # ── List ops ─────────────────────────────────────────────────────
 
@@ -102,20 +113,21 @@ class RedisClient:
         Non-string values are JSON-serialized.
         """
         serialized = json.dumps(value) if not isinstance(value, str) else value
-        if key not in self._lists:
-            self._lists[key] = []
-        self._lists[key].append(serialized)
+        async with self._lock:
+            self._lists.setdefault(key, []).append(serialized)
 
     async def pop_from_list(self, key: str) -> str | None:
         """Pop the head of the list at *key* and return it, or ``None``."""
-        queue = self._lists.get(key)
-        if not queue:
-            return None
-        return queue.pop(0)
+        async with self._lock:
+            queue = self._lists.get(key)
+            if not queue:
+                return None
+            return queue.pop(0)
 
     async def get_list_length(self, key: str) -> int:
         """Return the number of items in the list at *key*."""
-        return len(self._lists.get(key, []))
+        async with self._lock:
+            return len(self._lists.get(key, []))
 
     # ── Consumer group ops ───────────────────────────────────────────
 
@@ -126,10 +138,11 @@ class RedisClient:
         already existed (idempotent).
         """
         key = (group, stream)
-        if key in self._consumer_groups:
-            return False
-        self._consumer_groups[key] = set()
-        return True
+        async with self._lock:
+            if key in self._consumer_groups:
+                return False
+            self._consumer_groups[key] = set()
+            return True
 
     async def ack_message(self, group: str, stream: str, entry_id: str) -> bool:
         """Acknowledge a message in *group* for *stream*.
@@ -137,10 +150,12 @@ class RedisClient:
         Returns ``True`` if the group existed and the ack was recorded.
         """
         key = (group, stream)
-        if key not in self._consumer_groups:
-            return False
-        self._consumer_groups[key].add(entry_id)
-        return True
+        async with self._lock:
+            group_set = self._consumer_groups.get(key)
+            if group_set is None:
+                return False
+            group_set.add(entry_id)
+            return True
 
     # ── Pub/sub ops ──────────────────────────────────────────────────
 
@@ -151,15 +166,17 @@ class RedisClient:
         internal log. Returns the number of subscribers (0 in the
         in-memory version since no real subscribers exist).
         """
-        self._events.append({"channel": channel, "data": data})
-        return 0
+        async with self._lock:
+            self._events.append({"channel": channel, "data": data})
+            return 0
 
     # ── Lifecycle ────────────────────────────────────────────────────
 
     async def close(self) -> None:
         """Release resources (no-op for in-memory store)."""
-        self._data.clear()
-        self._streams.clear()
-        self._lists.clear()
-        self._consumer_groups.clear()
-        self._events.clear()
+        async with self._lock:
+            self._data.clear()
+            self._streams.clear()
+            self._lists.clear()
+            self._consumer_groups.clear()
+            self._events.clear()

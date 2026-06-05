@@ -251,10 +251,10 @@ class TestPostgresModels:
         mock_run_sync.assert_called_once()
 
     async def test_save_account(self, mock_session, sample_account):
-        """save_account adds the account to the session and commits."""
+        """save_account merges the account into the session and commits."""
         from ai_orchestrator.storage.postgres_models import save_account
         result = await save_account(mock_session, sample_account)
-        mock_session.add.assert_called_once()
+        mock_session.merge.assert_called_once()
         mock_session.commit.assert_called_once()
         assert result is True
 
@@ -262,10 +262,10 @@ class TestPostgresModels:
         """save_account creates an AccountModel from the Account pydantic model."""
         from ai_orchestrator.storage.postgres_models import save_account, AccountModel
         await save_account(mock_session, sample_account)
-        added = mock_session.add.call_args[0][0]
-        assert isinstance(added, AccountModel)
-        assert added.id == "test:acct-001"
-        assert added.provider == "openai"
+        merged = mock_session.merge.call_args.args[0]
+        assert isinstance(merged, AccountModel)
+        assert merged.id == "test:acct-001"
+        assert merged.provider == "openai"
 
     async def test_load_account_found(self, mock_session, sample_account):
         """load_account returns an Account when the row exists."""
@@ -298,14 +298,14 @@ class TestPostgresModels:
         assert account is None
 
     async def test_save_task(self, mock_session, sample_task):
-        """save_task adds the task to the session and commits."""
+        """save_task merges the task into the session and commits."""
         from ai_orchestrator.storage.postgres_models import save_task, TaskModel
         result = await save_task(mock_session, sample_task)
-        mock_session.add.assert_called_once()
+        mock_session.merge.assert_called_once()
         mock_session.commit.assert_called_once()
-        added = mock_session.add.call_args[0][0]
-        assert isinstance(added, TaskModel)
-        assert added.id == "test:task-001"
+        merged = mock_session.merge.call_args.args[0]
+        assert isinstance(merged, TaskModel)
+        assert merged.id == "test:task-001"
         assert result is True
 
     async def test_load_task_found(self, mock_session, sample_task):
