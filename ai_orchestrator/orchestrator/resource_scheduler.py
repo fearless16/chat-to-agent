@@ -31,7 +31,7 @@ class WatermarkLevel(enum.IntEnum):
     CRITICAL = 4
 
 
-_WATERMARK_THRESHOLDS_GB: list[float] = [3.0, 2.5, 2.0, 1.5]
+_WATERMARK_THRESHOLDS_GB: list[float] = [1.0, 0.75, 0.5, 0.25]
 
 # Provider estimate table: upper-cased kind -> GB estimate
 _PROVIDER_RAM_ESTIMATES: dict[str, float] = {

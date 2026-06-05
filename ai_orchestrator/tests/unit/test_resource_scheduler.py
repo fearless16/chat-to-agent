@@ -1,4 +1,12 @@
-"""Tests for ResourceScheduler — resource-aware task scheduling."""
+"""Tests for ResourceScheduler — resource-aware task scheduling.
+
+Watermark thresholds: [1.0, 0.75, 0.5, 0.25] GB
+  > 1.0  → NORMAL
+  ≤ 1.0  → WARNING
+  ≤ 0.75 → CLEANUP
+  ≤ 0.5  → EMERGENCY
+  ≤ 0.25 → CRITICAL
+"""
 
 from ai_orchestrator.models.task import TaskPriority
 from ai_orchestrator.orchestrator.resource_scheduler import (
@@ -51,29 +59,29 @@ class TestGetWatermarkLevel:
     def setup_method(self):
         self.scheduler = ResourceScheduler()
 
-    def test_normal_above_3gb(self):
+    def test_normal_above_1gb(self):
         assert self.scheduler.get_watermark_level(10.0) == WatermarkLevel.NORMAL
-        assert self.scheduler.get_watermark_level(3.5) == WatermarkLevel.NORMAL
-        assert self.scheduler.get_watermark_level(3.01) == WatermarkLevel.NORMAL
+        assert self.scheduler.get_watermark_level(1.5) == WatermarkLevel.NORMAL
+        assert self.scheduler.get_watermark_level(1.01) == WatermarkLevel.NORMAL
 
-    def test_warning_at_3gb(self):
-        assert self.scheduler.get_watermark_level(3.0) == WatermarkLevel.WARNING
-        assert self.scheduler.get_watermark_level(2.8) == WatermarkLevel.WARNING
-        assert self.scheduler.get_watermark_level(2.51) == WatermarkLevel.WARNING
+    def test_warning_at_1gb(self):
+        assert self.scheduler.get_watermark_level(1.0) == WatermarkLevel.WARNING
+        assert self.scheduler.get_watermark_level(0.9) == WatermarkLevel.WARNING
+        assert self.scheduler.get_watermark_level(0.76) == WatermarkLevel.WARNING
 
-    def test_cleanup_at_2_5gb(self):
-        assert self.scheduler.get_watermark_level(2.5) == WatermarkLevel.CLEANUP
-        assert self.scheduler.get_watermark_level(2.3) == WatermarkLevel.CLEANUP
-        assert self.scheduler.get_watermark_level(2.01) == WatermarkLevel.CLEANUP
+    def test_cleanup_at_0_75gb(self):
+        assert self.scheduler.get_watermark_level(0.75) == WatermarkLevel.CLEANUP
+        assert self.scheduler.get_watermark_level(0.6) == WatermarkLevel.CLEANUP
+        assert self.scheduler.get_watermark_level(0.51) == WatermarkLevel.CLEANUP
 
-    def test_emergency_at_2gb(self):
-        assert self.scheduler.get_watermark_level(2.0) == WatermarkLevel.EMERGENCY
-        assert self.scheduler.get_watermark_level(1.8) == WatermarkLevel.EMERGENCY
-        assert self.scheduler.get_watermark_level(1.51) == WatermarkLevel.EMERGENCY
+    def test_emergency_at_0_5gb(self):
+        assert self.scheduler.get_watermark_level(0.5) == WatermarkLevel.EMERGENCY
+        assert self.scheduler.get_watermark_level(0.4) == WatermarkLevel.EMERGENCY
+        assert self.scheduler.get_watermark_level(0.26) == WatermarkLevel.EMERGENCY
 
-    def test_critical_at_1_5gb(self):
-        assert self.scheduler.get_watermark_level(1.5) == WatermarkLevel.CRITICAL
-        assert self.scheduler.get_watermark_level(1.0) == WatermarkLevel.CRITICAL
+    def test_critical_at_0_25gb(self):
+        assert self.scheduler.get_watermark_level(0.25) == WatermarkLevel.CRITICAL
+        assert self.scheduler.get_watermark_level(0.1) == WatermarkLevel.CRITICAL
         assert self.scheduler.get_watermark_level(0.0) == WatermarkLevel.CRITICAL
 
     def test_negative_ram_is_critical(self):
@@ -139,8 +147,6 @@ class TestComputeMaxAgents:
         """Very high core count should not overflow."""
         res = self._res(ram=100.0, cores=999_999)
         result = self.scheduler.compute_max_agents(res)
-        # floor((100-2)/1.5) = 65, cores*2 = 1,999,998, browser=10, provider=20, configured=20
-        # min(65, 1999998, 10, 20, 20) = 10
         assert result == 10
 
     def test_custom_avg_ram(self):
@@ -165,16 +171,16 @@ class TestCanAcceptTask:
             cpu_usage_percent=25.0,
         )
 
-    # --- CRITICAL priority: only blocked at CRITICAL watermark ---
+    # --- CRITICAL priority: only blocked at CRITICAL watermark (≤0.25 GB) ---
 
     def test_critical_accepted_at_emergency(self):
         assert self.scheduler.can_accept_task(
-            self._res(1.8), TaskPriority.CRITICAL
+            self._res(0.4), TaskPriority.CRITICAL
         ) is True
 
     def test_critical_rejected_at_critical(self):
         assert self.scheduler.can_accept_task(
-            self._res(1.0), TaskPriority.CRITICAL
+            self._res(0.1), TaskPriority.CRITICAL
         ) is False
 
     def test_critical_accepted_at_normal(self):
@@ -182,51 +188,51 @@ class TestCanAcceptTask:
             self._res(10.0), TaskPriority.CRITICAL
         ) is True
 
-    # --- NORMAL priority: rejected at EMERGENCY+ ---
+    # --- NORMAL priority: rejected at EMERGENCY+ (≤0.5 GB) ---
 
     def test_normal_accepted_at_cleanup(self):
         assert self.scheduler.can_accept_task(
-            self._res(2.3), TaskPriority.NORMAL
+            self._res(0.6), TaskPriority.NORMAL
         ) is True
 
     def test_normal_rejected_at_emergency(self):
         assert self.scheduler.can_accept_task(
-            self._res(1.8), TaskPriority.NORMAL
+            self._res(0.4), TaskPriority.NORMAL
         ) is False
 
     def test_normal_rejected_at_critical(self):
         assert self.scheduler.can_accept_task(
-            self._res(1.0), TaskPriority.NORMAL
+            self._res(0.1), TaskPriority.NORMAL
         ) is False
 
     def test_normal_accepted_at_warning(self):
         assert self.scheduler.can_accept_task(
-            self._res(2.8), TaskPriority.NORMAL
+            self._res(0.9), TaskPriority.NORMAL
         ) is True
 
-    # --- LOW priority: rejected at CLEANUP+ ---
+    # --- LOW priority: rejected at CLEANUP+ (≤0.75 GB) ---
 
     def test_low_accepted_at_warning(self):
         assert self.scheduler.can_accept_task(
-            self._res(2.8), TaskPriority.LOW
+            self._res(0.9), TaskPriority.LOW
         ) is True
 
     def test_low_rejected_at_cleanup(self):
         assert self.scheduler.can_accept_task(
-            self._res(2.3), TaskPriority.LOW
+            self._res(0.6), TaskPriority.LOW
         ) is False
 
     def test_low_rejected_at_emergency(self):
         assert self.scheduler.can_accept_task(
-            self._res(1.8), TaskPriority.LOW
+            self._res(0.4), TaskPriority.LOW
         ) is False
 
     def test_low_rejected_at_critical(self):
         assert self.scheduler.can_accept_task(
-            self._res(1.0), TaskPriority.LOW
+            self._res(0.1), TaskPriority.LOW
         ) is False
 
-    # --- BACKGROUND priority: rejected at WARNING+ ---
+    # --- BACKGROUND priority: rejected at WARNING+ (≤1.0 GB) ---
 
     def test_background_accepted_at_normal(self):
         assert self.scheduler.can_accept_task(
@@ -235,27 +241,27 @@ class TestCanAcceptTask:
 
     def test_background_rejected_at_warning(self):
         assert self.scheduler.can_accept_task(
-            self._res(2.8), TaskPriority.BACKGROUND
+            self._res(0.9), TaskPriority.BACKGROUND
         ) is False
 
     def test_background_rejected_at_cleanup(self):
         assert self.scheduler.can_accept_task(
-            self._res(2.3), TaskPriority.BACKGROUND
+            self._res(0.6), TaskPriority.BACKGROUND
         ) is False
 
     def test_background_rejected_at_emergency(self):
         assert self.scheduler.can_accept_task(
-            self._res(1.8), TaskPriority.BACKGROUND
+            self._res(0.4), TaskPriority.BACKGROUND
         ) is False
 
     def test_background_rejected_at_critical(self):
         assert self.scheduler.can_accept_task(
-            self._res(1.0), TaskPriority.BACKGROUND
+            self._res(0.1), TaskPriority.BACKGROUND
         ) is False
 
 
 class TestShouldThrottle:
-    """should_throttle returns True at EMERGENCY or CRITICAL."""
+    """should_throttle returns True at EMERGENCY (≤0.5 GB) or CRITICAL (≤0.25 GB)."""
 
     def setup_method(self):
         self.scheduler = ResourceScheduler()
@@ -274,16 +280,16 @@ class TestShouldThrottle:
         assert self.scheduler.should_throttle(self._res(10.0)) is False
 
     def test_no_throttle_at_warning(self):
-        assert self.scheduler.should_throttle(self._res(2.8)) is False
+        assert self.scheduler.should_throttle(self._res(0.9)) is False
 
     def test_no_throttle_at_cleanup(self):
-        assert self.scheduler.should_throttle(self._res(2.3)) is False
+        assert self.scheduler.should_throttle(self._res(0.6)) is False
 
     def test_throttle_at_emergency(self):
-        assert self.scheduler.should_throttle(self._res(1.8)) is True
+        assert self.scheduler.should_throttle(self._res(0.4)) is True
 
     def test_throttle_at_critical(self):
-        assert self.scheduler.should_throttle(self._res(1.0)) is True
+        assert self.scheduler.should_throttle(self._res(0.1)) is True
 
     def test_throttle_at_zero_ram(self):
         assert self.scheduler.should_throttle(self._res(0.0)) is True
@@ -313,25 +319,25 @@ class TestSuggestAction:
 
     def test_warning(self):
         assert (
-            self.scheduler.suggest_action(self._res(2.8))
+            self.scheduler.suggest_action(self._res(0.9))
             == "reduce low-priority agents"
         )
 
     def test_cleanup(self):
         assert (
-            self.scheduler.suggest_action(self._res(2.3))
+            self.scheduler.suggest_action(self._res(0.6))
             == "suspend idle browsers, flush caches"
         )
 
     def test_emergency(self):
         assert (
-            self.scheduler.suggest_action(self._res(1.8))
+            self.scheduler.suggest_action(self._res(0.4))
             == "pause all non-critical agents, trim memory"
         )
 
     def test_critical(self):
         assert (
-            self.scheduler.suggest_action(self._res(1.0))
+            self.scheduler.suggest_action(self._res(0.1))
             == "freeze new tasks, kill lowest priority agents"
         )
 
