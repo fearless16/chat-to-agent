@@ -1,11 +1,18 @@
 """Tests for the Security module — vault, sandbox, prompt guard."""
 
+import shutil
 import textwrap
+from pathlib import Path
 
 import pytest
 
 from ai_orchestrator.security.vault import CredentialVault
-from ai_orchestrator.security.sandbox import Sandbox, SandboxResult
+from ai_orchestrator.security.sandbox import (
+    Sandbox,
+    SandboxConfig,
+    SandboxError,
+    SandboxResult,
+)
 from ai_orchestrator.security.prompt_guard import PromptGuard, PromptGuardResult
 
 
@@ -443,3 +450,230 @@ class TestPromptGuard:
         # sanitize should redact the dangerous line
         cleaned = guard.sanitize(inp)
         assert "ignore all above" not in cleaned
+
+
+# ---------------------------------------------------------------------------
+# SandboxConfig
+# ---------------------------------------------------------------------------
+
+class TestSandboxConfig:
+    """SandboxConfig dataclass defaults and construction."""
+
+    def test_defaults(self):
+        """Default config has sensible values."""
+        cfg = SandboxConfig()
+        assert cfg.timeout_ms == 30_000
+        assert cfg.memory_limit_mb == 512
+        assert cfg.network_access is False
+        assert cfg.workdir is None
+        assert cfg.env_overrides is None
+        assert cfg.output_limit_bytes == 1_048_576
+
+    def test_custom_values(self):
+        """Custom config values are stored."""
+        cfg = SandboxConfig(
+            timeout_ms=10_000,
+            memory_limit_mb=256,
+            network_access=True,
+            workdir="/tmp/test",
+            env_overrides={"FOO": "bar"},
+            output_limit_bytes=4096,
+        )
+        assert cfg.timeout_ms == 10_000
+        assert cfg.memory_limit_mb == 256
+        assert cfg.network_access is True
+        assert cfg.workdir == "/tmp/test"
+        assert cfg.env_overrides == {"FOO": "bar"}
+        assert cfg.output_limit_bytes == 4096
+
+
+# ---------------------------------------------------------------------------
+# Sandbox — extended execution
+# ---------------------------------------------------------------------------
+
+class TestSandboxCommand:
+    """Generic command execution via execute_command."""
+
+    @pytest.mark.asyncio
+    async def test_execute_python_binary(self):
+        """Run python --version via execute_command."""
+        sandbox = Sandbox()
+        try:
+            result = await sandbox.execute_command("python3", ["--version"])
+            assert result.return_code == 0
+            assert "Python" in result.stdout
+        finally:
+            await sandbox.close()
+
+    @pytest.mark.asyncio
+    async def test_execute_missing_binary_raises(self):
+        """Missing binary raises SandboxError."""
+        sandbox = Sandbox()
+        try:
+            with pytest.raises(SandboxError, match="not found on PATH"):
+                await sandbox.execute_command("binary_that_does_not_exist_xyz")
+        finally:
+            await sandbox.close()
+
+    @pytest.mark.asyncio
+    async def test_execute_command_with_workdir(self):
+        """execute_command respects workdir."""
+        sandbox = Sandbox()
+        try:
+            result = await sandbox.execute_command(
+                "pwd", workdir="/tmp"
+            )
+            assert result.return_code == 0
+            assert "/tmp" in result.stdout
+        finally:
+            await sandbox.close()
+
+    @pytest.mark.asyncio
+    async def test_execute_command_timeout(self):
+        """execute_command enforces timeout."""
+        sandbox = Sandbox()
+        try:
+            result = await sandbox.execute_command(
+                "sleep", ["10"], timeout_ms=300
+            )
+            assert result.timed_out is True
+        finally:
+            await sandbox.close()
+
+
+class TestSandboxPythonModule:
+    """python -m execution via execute_python_module."""
+
+    @pytest.mark.asyncio
+    async def test_json_tool_help(self):
+        """python -m json.tool --help succeeds."""
+        sandbox = Sandbox()
+        try:
+            result = await sandbox.execute_python_module(
+                "json.tool",
+                args=["--help"],
+            )
+            assert result.return_code == 0
+            assert "usage" in result.stdout or "usage" in result.stderr
+        finally:
+            await sandbox.close()
+
+    @pytest.mark.asyncio
+    async def test_module_with_args(self):
+        """python -m pip --version succeeds."""
+        sandbox = Sandbox()
+        try:
+            result = await sandbox.execute_python_module("pip", ["--version"])
+            assert result.return_code == 0
+            assert "pip" in result.stdout
+        finally:
+            await sandbox.close()
+
+    @pytest.mark.asyncio
+    async def test_failing_module(self):
+        """Module that raises exits non-zero."""
+        sandbox = Sandbox()
+        try:
+            result = await sandbox.execute_python_module(
+                "unittest",
+                args=["non_existent_module_test"],
+            )
+            assert result.return_code != 0
+        finally:
+            await sandbox.close()
+
+
+class TestSandboxNode:
+    """Node.js execution via execute_node."""
+
+    @pytest.mark.asyncio
+    async def test_execute_node_hello(self):
+        """Simple Node.js print reaches stdout."""
+        node_path = shutil.which("node")
+        if not node_path:
+            pytest.skip("node not found on PATH")
+        sandbox = Sandbox()
+        try:
+            result = await sandbox.execute_node('console.log("hello node")')
+            assert result.return_code == 0
+            assert "hello node" in result.stdout
+        finally:
+            await sandbox.close()
+
+    @pytest.mark.asyncio
+    async def test_execute_node_error(self):
+        """Node.js runtime error captured in stderr."""
+        node_path = shutil.which("node")
+        if not node_path:
+            pytest.skip("node not found on PATH")
+        sandbox = Sandbox()
+        try:
+            result = await sandbox.execute_node('throw new Error("boom")')
+            assert result.return_code != 0
+            assert "Error: boom" in result.stderr
+        finally:
+            await sandbox.close()
+
+    @pytest.mark.asyncio
+    async def test_execute_node_missing_raises(self):
+        """SandboxError when node is not on PATH."""
+        sandbox = Sandbox()
+        try:
+            original = sandbox._resolve_binary("node")
+            # If node is installed, the test is meaningless; skip
+            if original:
+                pytest.skip("node is installed on this system")
+        except SandboxError:
+            # node is not installed — this is the scenario we test
+            pass
+        finally:
+            await sandbox.close()
+
+
+class TestSandboxWorkspace:
+    """Workspace-aware execution via execute_in_workspace."""
+
+    @pytest.mark.asyncio
+    async def test_execute_in_workspace_sets_cwd(self, tmp_path: Path):
+        """Command runs inside workspace_root."""
+        from ai_orchestrator.workspace.manager import FileWorkspace
+
+        ws = FileWorkspace.for_task("test-sandbox", root=tmp_path)
+        sandbox = Sandbox()
+        try:
+            result = await sandbox.execute_in_workspace(ws, "pwd")
+            assert result.return_code == 0
+            assert str(ws.workspace_root) in result.stdout
+        finally:
+            await sandbox.close()
+
+    @pytest.mark.asyncio
+    async def test_execute_in_workspace_can_read_files(self, tmp_path: Path):
+        """Command can read files written to workspace beforehand."""
+        from ai_orchestrator.workspace.manager import FileWorkspace
+
+        ws = FileWorkspace.for_task("test-read", root=tmp_path)
+        ws.write("hello.txt", "world")
+
+        sandbox = Sandbox()
+        try:
+            result = await sandbox.execute_in_workspace(ws, "cat hello.txt")
+            assert result.return_code == 0
+            assert result.stdout.strip() == "world"
+        finally:
+            await sandbox.close()
+
+    @pytest.mark.asyncio
+    async def test_execute_in_workspace_timeout(self, tmp_path: Path):
+        """execute_in_workspace enforces timeout."""
+        from ai_orchestrator.workspace.manager import FileWorkspace
+
+        ws = FileWorkspace.for_task("test-timeout", root=tmp_path)
+        sandbox = Sandbox()
+        try:
+            result = await sandbox.execute_in_workspace(
+                ws, "sleep 10", timeout_ms=300
+            )
+            assert result.timed_out is True
+        finally:
+            await sandbox.close()

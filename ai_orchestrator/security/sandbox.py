@@ -16,9 +16,15 @@ import asyncio
 import os
 import platform
 import signal
+import shutil
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ai_orchestrator.workspace.manager import FileWorkspace
 
 try:
     import resource  # POSIX-only; absent on Windows.
@@ -39,6 +45,27 @@ class SandboxResult:
 
 
 _MAX_OUTPUT_BYTES = 1_048_576  # 1 MiB cap on stdout+stderr per stream
+
+
+class SandboxError(RuntimeError):
+    """Raised when a sandbox execution cannot start (binary not found, etc.).
+
+    This is distinct from a non-zero *return_code* in :class:`SandboxResult`,
+    which indicates the command ran but failed. ``SandboxError`` means the
+    command never started.
+    """
+
+
+@dataclass
+class SandboxConfig:
+    """Reusable configuration for a single sandboxed command."""
+
+    timeout_ms: int = 30_000
+    memory_limit_mb: int = 512
+    network_access: bool = False
+    workdir: str | Path | None = None
+    env_overrides: dict[str, str] | None = None
+    output_limit_bytes: int = _MAX_OUTPUT_BYTES
 
 
 class Sandbox:
@@ -135,6 +162,105 @@ class Sandbox:
         except (FileNotFoundError, asyncio.TimeoutError):
             return False
 
+    # ------------------------------------------------------------------
+    # Extended execution methods
+    # ------------------------------------------------------------------
+
+    async def execute_node(
+        self,
+        code: str,
+        timeout_ms: int = 30_000,
+        memory_limit_mb: int = 512,
+        network_access: bool = False,
+    ) -> SandboxResult:
+        """Execute *code* as a Node.js script in a subprocess.
+
+        Raises :class:`SandboxError` if ``node`` is not on ``PATH``.
+        """
+        self._check_not_closed()
+        node = self._resolve_binary("node")
+        cmd = [node, "-e", code]
+        env = self._build_env(memory_limit_mb, network=network_access)
+        return await self._run_process(
+            cmd, env, timeout_ms, memory_limit_mb=memory_limit_mb
+        )
+
+    async def execute_command(
+        self,
+        binary: str,
+        args: list[str] | None = None,
+        *,
+        timeout_ms: int = 30_000,
+        workdir: str | Path | None = None,
+        network_access: bool = False,
+        config: SandboxConfig | None = None,
+    ) -> SandboxResult:
+        """Execute an arbitrary *binary* with arguments.
+
+        The *binary* is resolved via ``shutil.which()`` and executed directly
+        (no shell wrapping).  Raises :class:`SandboxError` if the binary
+        cannot be found on ``PATH``.
+
+        Pass a :class:`SandboxConfig` as *config* to set all options at once;
+        individual keyword arguments override matching config fields.
+        """
+        self._check_not_closed()
+        cfg = config or SandboxConfig()
+        timeout_ms = timeout_ms if timeout_ms != 30_000 else cfg.timeout_ms
+        workdir = workdir if workdir is not None else cfg.workdir
+        network_access = network_access if not network_access else cfg.network_access
+
+        resolved = self._resolve_binary(binary)
+        cmd = [resolved, *(args or [])]
+        env = self._build_env(memory_limit_mb=None, network=network_access)
+        return await self._run_process(
+            cmd, env, timeout_ms, cwd=str(workdir) if workdir else None
+        )
+
+    async def execute_python_module(
+        self,
+        module: str,
+        args: list[str] | None = None,
+        *,
+        timeout_ms: int = 30_000,
+        memory_limit_mb: int = 512,
+        network_access: bool = False,
+        workdir: str | Path | None = None,
+    ) -> SandboxResult:
+        """Execute ``python -m <module> [args...]`` in a subprocess.
+
+        Useful for running tools like ``pytest``, ``mypy``, or ``ruff``
+        via the current Python interpreter.
+        """
+        self._check_not_closed()
+        python = self._resolve_python()
+        cmd = [python, "-m", module, *(args or [])]
+        env = self._build_env(memory_limit_mb, network=network_access)
+        return await self._run_process(
+            cmd, env, timeout_ms, cwd=str(workdir) if workdir else None,
+            memory_limit_mb=memory_limit_mb,
+        )
+
+    async def execute_in_workspace(
+        self,
+        workspace: FileWorkspace,
+        command: str,
+        *,
+        timeout_ms: int = 30_000,
+        network_access: bool = False,
+    ) -> SandboxResult:
+        """Execute a bash *command* with the workspace root as working dir.
+
+        This is the primary entrypoint for the fix-analysis loop: agents
+        write code into a workspace, then run tests via this method.
+        """
+        return await self.execute_bash(
+            command,
+            timeout_ms=timeout_ms,
+            workdir=str(workspace.workspace_root),
+            network_access=network_access,
+        )
+
     async def close(self) -> None:
         """Release resources.  Idempotent."""
         self._closed = True
@@ -153,6 +279,20 @@ class Sandbox:
         # Prefer sys.executable so we match the calling interpreter.
         import sys
         return sys.executable or "python3"
+
+    @staticmethod
+    def _resolve_binary(name: str) -> str:
+        """Resolve *name* to an absolute path via ``shutil.which``.
+
+        Raises :class:`SandboxError` if not found on ``PATH``.
+        """
+        resolved = shutil.which(name)
+        if not resolved:
+            raise SandboxError(
+                f"binary {name!r} not found on PATH. "
+                f"Is it installed?"
+            )
+        return resolved
 
     @staticmethod
     def _build_env(
