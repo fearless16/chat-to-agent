@@ -23,12 +23,17 @@ Layout on disk (created on first use)::
 from ai_orchestrator.workspace.artifacts import Artifact, ArtifactKind, ArtifactStore
 from ai_orchestrator.workspace.exceptions import (
     AtomicWriteError,
+    GitConflictError,
+    GitError,
+    GitNotInstalled,
+    GitNotRepoError,
     PatchConflictError,
     PathTraversalError,
     WorkspaceAlreadyExistsError,
     WorkspaceError,
     WorkspaceNotFoundError,
 )
+from ai_orchestrator.workspace.git import CommitInfo, FileStatus, GitWorkspace
 from ai_orchestrator.workspace.manager import (
     DEFAULT_WORKSPACE_ROOT,
     FileEntry,
@@ -48,10 +53,18 @@ __all__ = [
     "ArtifactStore",
     "Artifact",
     "ArtifactKind",
+    "GitWorkspace",
+    "CommitInfo",
+    "FileStatus",
     "WorkspaceError",
     "WorkspaceNotFoundError",
     "WorkspaceAlreadyExistsError",
     "PathTraversalError",
     "PatchConflictError",
     "AtomicWriteError",
+    "GitError",
+    "GitNotInstalled",
+    "GitNotRepoError",
+    "GitConflictError",
 ]
+

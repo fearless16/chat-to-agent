@@ -51,3 +51,31 @@ class PatchConflictError(WorkspaceError):
 
 class AtomicWriteError(WorkspaceError, OSError):
     """An atomic write failed mid-operation; the workspace may be inconsistent."""
+
+
+# ---------------------------------------------------------------------------
+# Git errors
+# ---------------------------------------------------------------------------
+
+
+class GitError(WorkspaceError):
+    """Base class for git-layer errors."""
+
+
+class GitNotInstalled(GitError, RuntimeError):
+    """The ``git`` executable was not found on the system PATH."""
+
+
+class GitNotRepoError(GitError):
+    """The workspace directory has not been initialized as a git repository.
+
+    Call :meth:`GitWorkspace.init` first.
+    """
+
+
+class GitConflictError(GitError):
+    """A git operation (merge, rebase) encountered a conflict."""
+
+
+class GitCanceledError(GitError):
+    """A git operation was skipped or canceled mid-flight."""
