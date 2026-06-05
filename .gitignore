@@ -85,3 +85,5 @@ poetry.lock
 # Repo-specific
 .out/
 .deepsource/
+chatgpt_session.json
+qwen_auth.json

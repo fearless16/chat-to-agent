@@ -7,6 +7,7 @@ from ai_orchestrator.adapters.deepseek_api import DeepSeekAPIAdapter
 from ai_orchestrator.adapters.kimi_api import KimiAPIAdapter
 from ai_orchestrator.adapters.local_llm import LocalLLMAdapter
 from ai_orchestrator.adapters.qwen_api import QwenAPIAdapter
+from ai_orchestrator.adapters.qwen_ui import QwenUIAdapter
 
 __all__ = [
     "ChatGPTAPIAdapter",
@@ -17,4 +18,5 @@ __all__ = [
     "ProviderAdapter",
     "ProviderResponse",
     "QwenAPIAdapter",
+    "QwenUIAdapter",
 ]

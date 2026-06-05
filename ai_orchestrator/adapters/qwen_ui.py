@@ -1,4 +1,4 @@
-"""ChatGPT UI (browser) adapter — Playwright-based for providers without public API."""
+"""Qwen UI (browser) adapter — Playwright-based for chat.qwen.ai."""
 
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ from typing import Optional
 from ai_orchestrator.adapters.base import ProviderAdapter, ProviderResponse
 
 
-class ChatGPTUIAdapter(ProviderAdapter):
-    """ChatGPT accessed via Playwright browser automation.
+class QwenUIAdapter(ProviderAdapter):
+    """Qwen accessed via Playwright browser automation at chat.qwen.ai.
 
-    Set ``mock_mode=False`` to launch a real browser and interact with
-    the ChatGPT web UI. Requires ``playwright`` to be installed.
+    Set ``mock_mode=False`` to launch a real browser.  Requires
+    ``playwright`` to be installed.
 
     Parameters
     ----------
@@ -29,21 +29,20 @@ class ChatGPTUIAdapter(ProviderAdapter):
         Max time (ms) for page loads, selectors, and response polling.
     storage_state:
         Playwright ``auth.json`` file path or a dict with ``cookies``
-        and ``origins`` keys.  **Note:** ChatGPT validates sessions
-        against browser fingerprint, so exported cookies are often
-        rejected (403).  Prefer ``persistent_profile``.
+        and ``origins`` keys.  **Note:** Qwen may validate sessions
+        against browser fingerprint, so exported cookies may be
+        rejected.  Prefer ``persistent_profile``.
     persistent_profile:
         Path to a Playwright persistent user-data directory.  The
         first time the adapter runs with ``headless=False`` the browser
         window opens so you can log in.  Subsequent runs reuse the
-        saved session automatically (including all cookies, localStorage,
-        and browser fingerprint).
+        saved session automatically.
     channel:
         Browser channel — ``"chromium"`` (default), ``"chrome"``, or
         ``"msedge"``.
     """
 
-    provider_name = "chatgpt"
+    provider_name = "qwen_ui"
     supports_streaming = False
     supports_tools = False
 
@@ -87,7 +86,7 @@ class ChatGPTUIAdapter(ProviderAdapter):
             return False
 
     def get_context_limit(self) -> int:
-        return 32768
+        return 131072
 
     async def is_rate_limited(self) -> bool:
         return False
@@ -132,9 +131,9 @@ class ChatGPTUIAdapter(ProviderAdapter):
         self, prompt: str, context: Optional[list[dict]] = None
     ) -> ProviderResponse:
         return ProviderResponse(
-            content=f"ChatGPT UI (browser) response to: {prompt[:50]}",
-            model="gpt-4o",
-            latency_ms=2500.0,
+            content=f"Qwen UI response to: {prompt[:50]}",
+            model="qwen-max",
+            latency_ms=2200.0,
         )
 
     # ── real browser path ────────────────────────────────────────────
@@ -149,7 +148,7 @@ class ChatGPTUIAdapter(ProviderAdapter):
             content = await self._read_response(page)
             return ProviderResponse(
                 content=content,
-                model="gpt-4o",
+                model="qwen-max",
                 latency_ms=(time.monotonic() - t0) * 1000,
             )
         except Exception as exc:
@@ -217,7 +216,7 @@ class ChatGPTUIAdapter(ProviderAdapter):
             self._page = await self._context.new_page()
 
         await self._page.goto(
-            "https://chatgpt.com",
+            "https://chat.qwen.ai",
             timeout=self._timeout_ms,
             wait_until="domcontentloaded",
         )
@@ -227,36 +226,62 @@ class ChatGPTUIAdapter(ProviderAdapter):
         return self._page
 
     async def _wait_for_app_ready(self, page) -> None:
-        for _ in range(20):
+        for _ in range(30):
             title = await page.title()
-            if "ChatGPT" in title:
+            if "Qwen" in title or "通义千问" in title:
                 return
-            if title != "Just a moment..." and title != "":
+            if title and title not in ("", "Just a moment..."):
                 return
             await asyncio.sleep(1.5)
 
     async def _type_prompt(self, page, prompt: str) -> None:
-        editor = page.locator("#prompt-textarea").first
-        await editor.wait_for(state="visible", timeout=self._timeout_ms)
-        await editor.click()
-        await page.keyboard.type(prompt, delay=50)
-        send_btn = page.locator('[data-testid="send-button"]').first
-        await send_btn.wait_for(state="visible", timeout=5_000)
-        await send_btn.click()
+        input_el = page.locator("textarea").first
+        try:
+            await input_el.wait_for(state="visible", timeout=10_000)
+            await input_el.click()
+            await input_el.fill(prompt)
+        except Exception:
+            pass
+
+        await asyncio.sleep(0.5)
+
+        send_selectors = [
+            'button[type="submit"]',
+            '[aria-label*="send" i]',
+            '[aria-label*="Send" i]',
+            '[data-testid="send-button"]',
+        ]
+        for sel in send_selectors:
+            btn = page.locator(sel).first
+            try:
+                await btn.wait_for(state="visible", timeout=3_000)
+                await btn.click()
+                return
+            except Exception:
+                continue
+
+        await page.keyboard.press("Enter")
 
     async def _read_response(self, page) -> str:
-        prev_count = await page.locator(
-            '[data-message-author-role="assistant"]'
-        ).count()
+        msg_sel = '[class*="message"]'
+        try:
+            prev_count = await page.locator(msg_sel).count()
+        except Exception:
+            prev_count = 0
+
         for _ in range(45):
             await asyncio.sleep(2)
-            curr_count = await page.locator(
-                '[data-message-author-role="assistant"]'
-            ).count()
+            try:
+                curr_count = await page.locator(msg_sel).count()
+            except Exception:
+                curr_count = 0
             if curr_count > prev_count:
                 await asyncio.sleep(2)
-                last = page.locator('[data-message-author-role="assistant"]').last
-                text = await last.inner_text()
-                if text.strip():
-                    return text.strip()
+                try:
+                    last = page.locator(msg_sel).last
+                    text = await last.inner_text()
+                    if text.strip():
+                        return text.strip()
+                except Exception:
+                    pass
         return ""

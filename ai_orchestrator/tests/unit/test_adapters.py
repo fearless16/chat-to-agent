@@ -8,6 +8,7 @@ from ai_orchestrator.adapters.base import ProviderAdapter, ProviderResponse
 from ai_orchestrator.adapters.chatgpt_api import ChatGPTAPIAdapter
 from ai_orchestrator.adapters.chatgpt_ui import ChatGPTUIAdapter
 from ai_orchestrator.adapters.qwen_api import QwenAPIAdapter
+from ai_orchestrator.adapters.qwen_ui import QwenUIAdapter
 from ai_orchestrator.adapters.deepseek_api import DeepSeekAPIAdapter
 from ai_orchestrator.adapters.kimi_api import KimiAPIAdapter
 from ai_orchestrator.adapters.local_llm import LocalLLMAdapter
@@ -129,6 +130,32 @@ class TestQwenAPIAdapter:
     def test_provider_name(self):
         adapter = QwenAPIAdapter()
         assert adapter.provider_name == "qwen"
+
+
+class TestQwenUIAdapter:
+    """Qwen UI (browser) adapter."""
+
+    @pytest.mark.asyncio
+    async def test_send_returns_response(self):
+        adapter = QwenUIAdapter()
+        resp = await adapter.send("Hello")
+        assert isinstance(resp, ProviderResponse)
+        assert "Qwen UI" in resp.content
+
+    @pytest.mark.asyncio
+    async def test_health_check(self):
+        adapter = QwenUIAdapter()
+        assert await adapter.health_check() is True
+
+    def test_context_limit(self):
+        adapter = QwenUIAdapter()
+        assert adapter.get_context_limit() == 131072
+
+    def test_provider_name(self):
+        adapter = QwenUIAdapter()
+        assert adapter.provider_name == "qwen_ui"
+        assert adapter.supports_streaming is False
+        assert adapter.supports_tools is False
 
 
 class TestDeepSeekAPIAdapter:
