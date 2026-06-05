@@ -90,6 +90,19 @@ PROVIDER_PROFILES: dict[str, ProviderCapabilities] = {
         supports_streaming=True,
         supports_tools=True,
     ),
+    "qwen_ui": ProviderCapabilities(
+        provider_name="qwen_ui",
+        transport="BROWSER",
+        capabilities=CapabilityVector(
+            reasoning=0.85, coding=0.8, translation=0.85,
+            multimodality=0.7, speed=0.25, reliability=0.25,
+            cost_efficiency=0.9, long_context=0.95,
+        ),
+        context_limit=131_072,
+        max_concurrent=2,
+        supports_streaming=False,
+        supports_tools=False,
+    ),
     "deepseek_api": ProviderCapabilities(
         provider_name="deepseek",
         transport="API",

@@ -86,4 +86,6 @@ poetry.lock
 .out/
 .deepsource/
 chatgpt_session.json
+chatgpt_auth.json
 qwen_auth.json
+*_browser_profile/
