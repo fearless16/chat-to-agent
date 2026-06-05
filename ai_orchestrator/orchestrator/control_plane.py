@@ -79,7 +79,6 @@ class Tier0Router:
 
     def route(
         self,
-        accounts: list[dict],
         requirements: TaskRequirements,
         provider_pool: dict[str, list],
     ) -> Optional[RoutingDecision]:
@@ -218,7 +217,7 @@ class ControlPlane:
 
         cp = ControlPlane()
         classification = await cp.classify("Write a Python function to sort a list")
-        decision = cp.route(accounts, requirements, provider_pool)
+         decision = cp.route(requirements, provider_pool)
     """
 
     def __init__(self) -> None:
@@ -243,7 +242,6 @@ class ControlPlane:
 
     def route(
         self,
-        accounts: list[dict],
         requirements: TaskRequirements,
         provider_pool: dict[str, list],
     ) -> Optional[RoutingDecision]:
@@ -253,7 +251,7 @@ class ControlPlane:
         profiles are pre-defined.  Escalation to Tier 1/2 is only
         needed when scores are tied or all profiles fail.
         """
-        return self._tier0.route(accounts, requirements, provider_pool)
+        return self._tier0.route(requirements, provider_pool)
 
     async def plan(self, prompt: str, task_type: str) -> list[dict]:
         """Create an execution plan using DeepSeek (Tier 2).

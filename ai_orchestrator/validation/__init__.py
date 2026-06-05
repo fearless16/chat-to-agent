@@ -10,6 +10,7 @@ from ai_orchestrator.validation.validator import (
     ResponseValidator,
     DeterministicValidator,
     DeepSeekValidator,
+    validate_response,
 )
 
 __all__ = [
@@ -19,4 +20,5 @@ __all__ = [
     "ResponseValidator",
     "DeterministicValidator",
     "DeepSeekValidator",
+    "validate_response",
 ]

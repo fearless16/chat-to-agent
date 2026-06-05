@@ -188,3 +188,18 @@ class ResponseValidator:
             result.merge(l2)
 
         return result
+
+
+async def validate_response(
+    response: ProviderResponse,
+    prompt: str = "",
+    require_deepseek: bool = False,
+) -> ValidationResult:
+    """Convenience entry point for the response validation pipeline.
+
+    Runs L1 deterministic checks always, escalating to L2 DeepSeek
+    review when required or when L1 confidence is low.
+    """
+    return await ResponseValidator().validate(
+        response, prompt=prompt, require_deepseek=require_deepseek
+    )

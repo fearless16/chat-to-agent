@@ -101,7 +101,12 @@ class ASTPatchEngine:
                 return PatchResult(applied=False, error=validation_error)
 
         diff = self._make_diff(source, patched, patch.file_path)
-        lines_changed = sum(1 for line in diff.splitlines() if line.startswith("+") or line.startswith("-"))
+        lines_changed = sum(
+            1 for line in diff.splitlines()
+            if (line.startswith("+") or line.startswith("-"))
+            and not line.startswith("--- ")
+            and not line.startswith("+++ ")
+        )
 
         return PatchResult(applied=True, diff=diff, lines_changed=lines_changed)
 

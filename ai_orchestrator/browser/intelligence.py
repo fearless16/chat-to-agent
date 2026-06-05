@@ -134,9 +134,10 @@ class UIIntelligence:
         # Stage 1 — Selector Cache ------------------------------------
         cached = self._cache.get(provider, role)
         if cached:
-            sel = UISelector(role=role, value=cached["value"], source="cache", confidence=cached["confidence"])
-            log.debug("Selector cache HIT for %s/%s: %s", provider, role, sel.value)
-            return UIQueryResult(selector=sel, pipeline_stage="cache", confidence=cached["confidence"])
+            source = cached.get("source", "cache")
+            sel = UISelector(role=role, value=cached["value"], source=source, confidence=cached["confidence"])
+            log.debug("Selector cache HIT for %s/%s: %s (src=%s)", provider, role, sel.value, source)
+            return UIQueryResult(selector=sel, pipeline_stage=source, confidence=cached["confidence"])
 
         # Stage 2 — Accessibility Tree ---------------------------------
         a11y_result = await self._try_a11y(page, role, hint)
@@ -178,6 +179,8 @@ class UIIntelligence:
                 node = await self._a11y.find_input(page, hint)
             elif role == UIRole.SEND:
                 node = await self._a11y.find_send_button(page, hint)
+            elif role == UIRole.ASSISTANT_MESSAGE:
+                node = await self._a11y.find_message_container(page, hint)
             else:
                 return None
 

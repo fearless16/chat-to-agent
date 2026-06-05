@@ -119,6 +119,28 @@ class AccessibilityRuntime:
                     return btn
         return buttons[0]
 
+    async def find_message_container(
+        self, page,
+        hint: Optional[str] = None,
+    ) -> Optional[A11yNode]:
+        snap = await self.snapshot(page)
+        candidates: list[A11yNode] = []
+        for node in snap.all_nodes():
+            if node.role in ("article", "region", "section", "group"):
+                name_lower = (node.name or "").lower()
+                if "message" in name_lower or "assistant" in name_lower or "response" in name_lower or "conversation" in name_lower:
+                    candidates.append(node)
+        if not candidates:
+            for node in snap.all_nodes():
+                if node.role in ("article", "list", "listitem", "region", "section", "group"):
+                    name_lower = (node.name or "").lower()
+                    if hint and hint.lower() in name_lower:
+                        candidates.append(node)
+        if not candidates:
+            return None
+        candidates.sort(key=lambda n: len(n.name or ""), reverse=True)
+        return candidates[0]
+
     # ── internal ────────────────────────────────────────────────────
 
     def _parse_node(self, raw: dict[str, Any]) -> A11yNode:

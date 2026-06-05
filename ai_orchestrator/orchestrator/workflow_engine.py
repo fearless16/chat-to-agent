@@ -55,6 +55,7 @@ class WorkflowEngine:
         self._action_counts: dict[str, dict[str, int]] = {}
         self._step_index: dict[str, int] = {}
         self._control_plane = control_plane or ControlPlane()
+        self._task_accounts: dict[str, str] = {}  # task_id → account_id
         # Map workflow state to task status
         self._state_to_task_status = {
             WorkflowState.IDLE: TaskStatus.IDLE,
@@ -97,21 +98,26 @@ class WorkflowEngine:
     def handle_account_event(self, event: AccountEvent) -> None:
         """React to an account state change.
 
-        When an account enters JAIL, all tasks that held leases on that
-        account are transitioned back to PLANNING so the Control Plane
-        can re-route them to a different provider.
+        When an account enters JAIL, only tasks that held leases on that
+        specific account are transitioned back to PLANNING so the Control
+        Plane can re-route them to a different provider.
         """
         if event.new_state.name != "JAIL":
             return
 
-        # Find all tasks with active leases on this account
-        # (the lease was force-expired by the LeaseManager)
         for task_id, state in list(self._task_states.items()):
             if state in (WorkflowState.EXECUTING, WorkflowState.TESTING, WorkflowState.FIX):
-                self._task_states[task_id] = WorkflowState.PLANNING
-                # Note: the actual Task object must be transitioned by the
-                # caller (the gateway handler) since we don't own it here.
-                # The state dict is sufficient to prevent further steps.
+                bound_account = self._task_accounts.get(task_id)
+                if bound_account is None or bound_account == event.account_id:
+                    self._task_states[task_id] = WorkflowState.PLANNING
+
+    def bind_task_account(self, task_id: str, account_id: str) -> None:
+        """Record that *task_id* is executing on *account_id*."""
+        self._task_accounts[task_id] = account_id
+
+    def unbind_task_account(self, task_id: str) -> None:
+        """Remove the task→account binding."""
+        self._task_accounts.pop(task_id, None)
 
     _AGENT_TO_STATE: dict[str, WorkflowState] = {
         "planner": WorkflowState.PLANNING,
