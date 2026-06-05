@@ -75,7 +75,3 @@ class GitNotRepoError(GitError):
 
 class GitConflictError(GitError):
     """A git operation (merge, rebase) encountered a conflict."""
-
-
-class GitCanceledError(GitError):
-    """A git operation was skipped or canceled mid-flight."""

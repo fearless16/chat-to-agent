@@ -1,13 +1,8 @@
-"""In-memory Redis client for development and testing.
+"""Redis client — production Redis with in-memory fallback for development and testing.
 
-Provides the same async interface as a real Redis client but stores
-everything in a plain Python dict. Supports key-value ops, streams,
-and list queues.
-
-All public mutating methods take a single :class:`asyncio.Lock` so that
-concurrent coroutines see consistent state.  This is a mock — production
-Redis operations are atomic on the server — but the API contract is
-preserved.
+When ``url`` is omitted, all data lives in plain Python dicts (ideal for
+testing and local dev without a Redis server).  Provide a ``url`` to
+connect to a real Redis instance.
 """
 
 from __future__ import annotations
@@ -15,39 +10,62 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-import uuid
 from typing import Any
+
+import redis.asyncio as aioredis
+from redis.asyncio.client import Redis as RealRedis
 
 
 class RedisClient:
-    """Async-friendly in-memory Redis mock with key, stream, and list operations.
+    """Async Redis client with transparent in-memory fallback.
 
-    Features:
-    - Key-value store with optional TTL (seconds)
-    - Streams with auto-generated entry IDs
-    - Consumer groups with message acknowledgment
-    - Pub/sub event publishing
-    - List (queue) operations with FIFO semantics
-    - JSON serialization for dict/list values
-    - Coroutine-safe via a single :class:`asyncio.Lock`
+    Usage::
+
+        # In-memory mock (default)
+        client = RedisClient()
+
+        # Real Redis
+        client = RedisClient(url="redis://localhost:6379")
+
+    All operations are coroutine-safe — the in-memory path uses a single
+    :class:`asyncio.Lock` and the real-Redis path delegates to
+    ``redis.asyncio`` which handles connection pooling and concurrency
+    natively.
     """
 
-    def __init__(self) -> None:
-        self._data: dict[str, tuple[str, float | None]] = {}  # key -> (value, expiry_ts)
-        self._streams: dict[str, list[tuple[str, dict[str, Any]]]] = {}  # stream -> [(id, data)]
-        self._lists: dict[str, list[str]] = {}  # key -> [value, ...]
-        self._consumer_groups: dict[tuple[str, str], set[str]] = {}  # (group, stream) -> {acked_ids}
-        self._events: list[dict[str, Any]] = []  # published events log
-        self._counter: int = 0
+    def __init__(self, url: str | None = None) -> None:
+        self._url = url
+        self._real: RealRedis | None = None
         self._lock = asyncio.Lock()
 
-    # ── Key-value ops ────────────────────────────────────────────────
+        # ── in-memory stores (used when url is None) ──────────────
+        self._data: dict[str, tuple[str, float | None]] = {}
+        self._streams: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+        self._lists: dict[str, list[str]] = {}
+        self._consumer_groups: dict[tuple[str, str], set[str]] = {}
+        self._events: list[dict[str, Any]] = []
+        self._counter: int = 0
+
+    async def _ensure_real(self) -> RealRedis:
+        if self._real is None:
+            self._real = aioredis.from_url(self._url, decode_responses=False)
+        return self._real
+
+    # ══════════════════════════════════════════════════════════════════
+    # Key-value ops
+    # ══════════════════════════════════════════════════════════════════
 
     async def set_key(self, key: str, value: Any, ttl: float | None = None) -> None:
-        """Set *key* to *value* with an optional *ttl* in seconds.
+        """Set *key* to *value* with an optional *ttl* in seconds."""
+        if self._url is not None:
+            r = await self._ensure_real()
+            serialized = json.dumps(value) if not isinstance(value, str) else value
+            if ttl is not None:
+                await r.setex(key, int(ttl), serialized)
+            else:
+                await r.set(key, serialized)
+            return
 
-        Non-string values are serialized via :func:`json.dumps`.
-        """
         serialized = json.dumps(value) if not isinstance(value, str) else value
         expiry = time.time() + ttl if ttl is not None else None
         async with self._lock:
@@ -55,6 +73,11 @@ class RedisClient:
 
     async def get_key(self, key: str) -> str | None:
         """Return the value for *key*, or ``None`` if missing or expired."""
+        if self._url is not None:
+            r = await self._ensure_real()
+            val = await r.get(key)
+            return val.decode() if val else None
+
         async with self._lock:
             entry = self._data.get(key)
             if entry is None:
@@ -66,7 +89,11 @@ class RedisClient:
             return value
 
     async def delete_key(self, key: str) -> bool:
-        """Delete *key*. Returns ``True`` if the key existed and was not expired."""
+        """Delete *key*. Returns ``True`` if the key existed."""
+        if self._url is not None:
+            r = await self._ensure_real()
+            return bool(await r.delete(key))
+
         async with self._lock:
             entry = self._data.get(key)
             if entry is None:
@@ -78,10 +105,17 @@ class RedisClient:
             del self._data[key]
             return True
 
-    # ── Stream ops ───────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════
+    # Stream ops
+    # ══════════════════════════════════════════════════════════════════
 
     async def push_to_stream(self, stream: str, data: dict[str, Any]) -> str:
-        """Push *data* to *stream* and return the auto-generated entry ID."""
+        """Push *data* to *stream* and return the entry ID."""
+        if self._url is not None:
+            r = await self._ensure_real()
+            entry_id = await r.xadd(stream, data)
+            return entry_id.decode()
+
         async with self._lock:
             self._counter += 1
             entry_id = f"{int(time.time() * 1000)}-{self._counter}"
@@ -94,30 +128,49 @@ class RedisClient:
         count: int = 10,
         block_ms: int = 0,
     ) -> list[dict[str, Any]]:
-        """Read up to *count* entries from *stream*.
+        """Read up to *count* entries from *stream*."""
+        if self._url is not None:
+            r = await self._ensure_real()
+            entries = await r.xread({stream: "0"}, count=count, block=block_ms)
+            if not entries:
+                return []
+            stream_name, msgs = entries[0]
+            result = []
+            for msg_id, data in msgs:
+                decoded = {
+                    k.decode() if isinstance(k, bytes) else k: v.decode() if isinstance(v, bytes) else v
+                    for k, v in data.items()
+                }
+                result.append(decoded)
+            return result
 
-        Returns the data portion of each entry as a ``dict``.
-        The *block_ms* parameter is accepted for interface compatibility
-        but is ignored (non-blocking in-memory store always returns
-        immediately).
-        """
         async with self._lock:
             entries = self._streams.get(stream, [])
             return [data for _, data in entries[:count]]
 
-    # ── List ops ─────────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════
+    # List ops
+    # ══════════════════════════════════════════════════════════════════
 
     async def push_to_list(self, key: str, value: Any) -> None:
-        """Push *value* to the tail of the list at *key*.
+        """Push *value* to the tail of the list at *key*."""
+        if self._url is not None:
+            r = await self._ensure_real()
+            serialized = json.dumps(value) if not isinstance(value, str) else value
+            await r.rpush(key, serialized)
+            return
 
-        Non-string values are JSON-serialized.
-        """
         serialized = json.dumps(value) if not isinstance(value, str) else value
         async with self._lock:
             self._lists.setdefault(key, []).append(serialized)
 
     async def pop_from_list(self, key: str) -> str | None:
         """Pop the head of the list at *key* and return it, or ``None``."""
+        if self._url is not None:
+            r = await self._ensure_real()
+            val = await r.lpop(key)
+            return val.decode() if val else None
+
         async with self._lock:
             queue = self._lists.get(key)
             if not queue:
@@ -126,17 +179,27 @@ class RedisClient:
 
     async def get_list_length(self, key: str) -> int:
         """Return the number of items in the list at *key*."""
+        if self._url is not None:
+            r = await self._ensure_real()
+            return await r.llen(key)
+
         async with self._lock:
             return len(self._lists.get(key, []))
 
-    # ── Consumer group ops ───────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════
+    # Consumer group ops
+    # ══════════════════════════════════════════════════════════════════
 
     async def create_consumer_group(self, group: str, stream: str) -> bool:
-        """Create a consumer group for *stream*.
+        """Create a consumer group for *stream*. Returns ``True`` if newly created."""
+        if self._url is not None:
+            r = await self._ensure_real()
+            try:
+                await r.xgroup_create(stream, group, "0", mkstream=True)
+                return True
+            except Exception:
+                return False
 
-        Returns ``True`` if the group was newly created, ``False`` if it
-        already existed (idempotent).
-        """
         key = (group, stream)
         async with self._lock:
             if key in self._consumer_groups:
@@ -145,10 +208,12 @@ class RedisClient:
             return True
 
     async def ack_message(self, group: str, stream: str, entry_id: str) -> bool:
-        """Acknowledge a message in *group* for *stream*.
+        """Acknowledge a message in *group* for *stream*."""
+        if self._url is not None:
+            r = await self._ensure_real()
+            count = await r.xack(stream, group, entry_id)
+            return count > 0
 
-        Returns ``True`` if the group existed and the ack was recorded.
-        """
         key = (group, stream)
         async with self._lock:
             group_set = self._consumer_groups.get(key)
@@ -157,23 +222,31 @@ class RedisClient:
             group_set.add(entry_id)
             return True
 
-    # ── Pub/sub ops ──────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════
+    # Pub/sub ops
+    # ══════════════════════════════════════════════════════════════════
 
     async def publish_event(self, channel: str, data: dict[str, Any]) -> int:
-        """Publish an event on *channel*.
+        """Publish an event on *channel*. Returns subscriber count."""
+        if self._url is not None:
+            r = await self._ensure_real()
+            payload = json.dumps(data)
+            return await r.publish(channel, payload)
 
-        In this in-memory emulator the event is simply appended to an
-        internal log. Returns the number of subscribers (0 in the
-        in-memory version since no real subscribers exist).
-        """
         async with self._lock:
             self._events.append({"channel": channel, "data": data})
             return 0
 
-    # ── Lifecycle ────────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════
+    # Lifecycle
+    # ══════════════════════════════════════════════════════════════════
 
     async def close(self) -> None:
-        """Release resources (no-op for in-memory store)."""
+        """Release resources and clear in-memory stores."""
+        if self._real is not None:
+            await self._real.aclose()
+            self._real = None
+
         async with self._lock:
             self._data.clear()
             self._streams.clear()
