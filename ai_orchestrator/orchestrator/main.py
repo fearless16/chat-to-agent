@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 import psutil
@@ -16,7 +17,7 @@ from ai_orchestrator.models.task import Task, TaskPriority, TaskStatus, TaskType
 from ai_orchestrator.orchestrator.lease_manager import LeaseManager
 from ai_orchestrator.orchestrator.provider_router import ProviderRouter
 from ai_orchestrator.orchestrator.resource_scheduler import ResourceScheduler, SystemResources, WatermarkLevel
-from ai_orchestrator.orchestrator.workflow_engine import WorkflowEngine, WorkflowState
+from ai_orchestrator.orchestrator.workflow_engine import WorkflowEngine
 
 app = FastAPI(title="AI Orchestrator", version="0.1.0")
 
@@ -26,6 +27,13 @@ provider_router = ProviderRouter()
 resource_scheduler = ResourceScheduler(configured_max_agents=10)
 workflow_engine = WorkflowEngine()
 _active_tasks: dict[str, Task] = {}
+_workspaces: dict[str, "FileWorkspace"] = {}  # task_id → workspace
+
+# Lazy-loaded singletons (created on first use)
+_sandbox: "Sandbox | None" = None
+_test_runner: "TestRunner | None" = None
+_runtime_loop: "RuntimeLoop | None" = None
+_default_workspace_root: Path | None = None
 
 
 # ── Request / Response schemas ───────────────────────────────────
@@ -77,6 +85,20 @@ class LeaseResponse(BaseModel):
     acquired_at: Optional[datetime] = None
     expires_at: Optional[datetime] = None
     is_alive: bool
+
+class WorkspaceResponse(BaseModel):
+    task_id: str
+    workspace_root: str
+    git_initialized: bool
+
+class RunLoopResponse(BaseModel):
+    task_id: str
+    success: bool
+    iterations_used: int
+    total_duration_ms: float
+    passed: int
+    failed: int
+    total_tests: int
 
 
 # ── Startup / shutdown ───────────────────────────────────────────
@@ -310,6 +332,104 @@ async def list_providers() -> dict[str, Any]:
         "supports_tools": p.supports_tools,
         "capabilities": p.capabilities.model_dump(),
     } for name, p in PROVIDER_PROFILES.items()}
+
+
+# ── Workspace & runtime endpoints ────────────────────────────────
+
+def _get_runtime() -> tuple:
+    """Lazy-init sandbox, test runner, and runtime loop."""
+    global _sandbox, _test_runner, _runtime_loop, _default_workspace_root
+    from ai_orchestrator.runtime.loop import RuntimeLoop
+    from ai_orchestrator.security.sandbox import Sandbox
+    from ai_orchestrator.testrunner.runner import TestRunner
+    from ai_orchestrator.workspace.manager import DEFAULT_WORKSPACE_ROOT
+    if _sandbox is None:
+        _sandbox = Sandbox()
+    if _test_runner is None:
+        _test_runner = TestRunner(_sandbox)
+    if _runtime_loop is None:
+        _runtime_loop = RuntimeLoop(_sandbox, test_runner=_test_runner)
+    if _default_workspace_root is None:
+        _default_workspace_root = DEFAULT_WORKSPACE_ROOT
+    return _sandbox, _test_runner, _runtime_loop, _default_workspace_root
+
+
+@app.post("/tasks/{task_id}/workspace", response_model=WorkspaceResponse)
+async def create_task_workspace(task_id: str) -> WorkspaceResponse:
+    """Create a workspace for an existing task.
+
+    The workspace is created under the default workspace root
+    (``<cwd>/workspaces/<task_id>/``) and optionally initialized with git.
+    Idempotent — repeated calls return the same workspace.
+    """
+    if task_id not in _active_tasks:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if task_id in _workspaces:
+        ws = _workspaces[task_id]
+    else:
+        from ai_orchestrator.workspace.manager import FileWorkspace
+        _, _, _, root = _get_runtime()
+        ws = FileWorkspace.for_task(task_id, root=root)
+        _workspaces[task_id] = ws
+
+    # Initialize git for version tracking
+    from ai_orchestrator.workspace.git import GitWorkspace
+    git_ws = GitWorkspace(ws)
+    try:
+        await git_ws.init()
+        git_init = True
+    except Exception:
+        git_init = False
+
+    return WorkspaceResponse(
+        task_id=task_id,
+        workspace_root=str(ws.workspace_root),
+        git_initialized=git_init,
+    )
+
+
+@app.post("/tasks/{task_id}/run-loop", response_model=RunLoopResponse)
+async def run_task_loop(
+    task_id: str,
+    max_iterations: int = 5,
+) -> RunLoopResponse:
+    """Run the full fix-analysis-test loop for a task.
+
+    Requires a workspace (call ``POST /tasks/{id}/workspace`` first).
+    Code must already exist in the workspace (e.g. written by an agent).
+    """
+    if task_id not in _active_tasks:
+        raise HTTPException(status_code=404, detail="Task not found")
+    ws = _workspaces.get(task_id)
+    if not ws:
+        raise HTTPException(
+            status_code=400,
+            detail="No workspace for this task — call POST /tasks/{id}/workspace first",
+        )
+
+    sandbox, test_runner, runtime_loop, _ = _get_runtime()
+
+    # Check sandbox availability before starting
+    if not await sandbox.check_sandbox_available():
+        raise HTTPException(status_code=503, detail="Sandbox unavailable — no Python interpreter found")
+
+    try:
+        result = await runtime_loop.run(
+            ws,
+            max_iterations=max_iterations,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Runtime loop failed: {exc}")
+
+    return RunLoopResponse(
+        task_id=task_id,
+        success=result.success,
+        iterations_used=result.iterations_used,
+        total_duration_ms=round(result.total_duration_ms, 2),
+        passed=result.test_run.passed if result.test_run else 0,
+        failed=result.test_run.failed if result.test_run else 0,
+        total_tests=result.test_run.total if result.test_run else 0,
+    )
 
 
 # ── Response helpers ─────────────────────────────────────────────
