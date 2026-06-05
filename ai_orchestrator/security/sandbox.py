@@ -313,6 +313,7 @@ class Sandbox:
             "LANG": os.environ.get("LANG", "C.UTF-8"),
             "LC_ALL": os.environ.get("LC_ALL", "C.UTF-8"),
             "PYTHONUNBUFFERED": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
             "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
         }
         if not network:
