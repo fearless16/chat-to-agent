@@ -25,6 +25,8 @@ class FetchObserver:
         self._active_stream_request_ids: set[str] = set()
         self._data_buffer: list[dict] = []
         self._response_text: str = ""
+        self._pending_body_requests: list[tuple] = []
+        self._cdp_session = None
 
     def on_response_received(self, event: dict) -> bool:
         response = event.get("response", {})
@@ -86,8 +88,8 @@ class FetchObserver:
         if not self._active_stream_request_ids and self.chunk_count > 0:
             self.stream_closed = True
             self.stream_active = False
-            # Try to grab the full body from CDP for chunked fetch streams.
-            self._try_fetch_body(request_id)
+        if request_id and self._cdp_session is not None:
+            self._pending_body_requests.append((request_id,))
 
     def on_loading_failed(self, event: dict) -> None:
         request_id = event.get("requestId", "")
@@ -102,20 +104,24 @@ class FetchObserver:
         on loading_finished to capture the full stream body."""
         self._cdp_session = cdp_session
 
-    async def _try_fetch_body(self, request_id: str) -> None:
-        if not self._cdp_session or not request_id:
-            return
-        try:
-            resp = await self._cdp_session.send(
-                "Network.getResponseBody", {"requestId": request_id}
-            )
-            body = resp.get("body", "") if isinstance(resp, dict) else ""
-            if body and not body.startswith("data:"):
-                self._response_text += body
-                if len(self._response_text) > 1_000_000:
-                    self._response_text = self._response_text[-1_000_000:]
-        except Exception:
-            pass
+    async def drain_pending_fetches(self) -> None:
+        while self._pending_body_requests:
+            request_id, = self._pending_body_requests.pop(0)
+            try:
+                resp = await self._cdp_session.send(
+                    "Network.getResponseBody", {"requestId": request_id}
+                )
+                body = resp.get("body", "") if isinstance(resp, dict) else ""
+                if body:
+                    # Accept all response body content — SSE, JSON, plain text.
+                    # Previously filtered out SSE (starting with "data:") but
+                    # SSE bodies must be captured and parsed downstream.
+                    if len(body) > 10:
+                        self._response_text += body
+                        if len(self._response_text) > 1_000_000:
+                            self._response_text = self._response_text[-1_000_000:]
+            except Exception:
+                pass
 
     def get_response_text(self) -> str:
         """Return the full body text for chunked fetch responses (if captured)."""
@@ -158,5 +164,6 @@ class FetchObserver:
             "application/x-ndjson",
             "application/x-json-stream",
             "text/plain",
+            "text/event-stream",
         )
         return any(ct.startswith(t) for t in streaming_types)

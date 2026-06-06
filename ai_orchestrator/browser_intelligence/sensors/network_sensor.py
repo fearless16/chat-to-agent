@@ -139,6 +139,7 @@ class NetworkSensor(BaseSensor):
         features = NetworkFeatures()
         try:
             self._drain_queued_events()
+            await self._fetch_observer.drain_pending_fetches()
             now = time.monotonic()
 
             elapsed = now - self._last_drain_time

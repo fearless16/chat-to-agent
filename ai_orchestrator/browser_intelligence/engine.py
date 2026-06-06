@@ -246,6 +246,7 @@ class BrowserIntelligenceEngine:
         self._last_adaptive_threshold: float = 0.50
         self._provider_id: str = ""
         self._cdp_session = None
+        self._pending_capture_fetches: list[str] = []
 
     @property
     def network_sensor(self) -> NetworkSensor:
@@ -455,26 +456,8 @@ class BrowserIntelligenceEngine:
         def on_loading_finished(event: dict) -> None:
             try:
                 request_id = event.get("requestId", "") or ""
-                cap = self._capture.close_response(request_id)
-                if cap is not None and cap.classification and cap.classification.is_chat:
-                    self._events.publish(
-                        EventType.GENERATION_COMPLETED,
-                        {
-                            "url": cap.url,
-                            "bytes": cap.bytes,
-                            "chunks": cap.chunks,
-                        },
-                        source="engine:capture",
-                    )
-                    self._events.publish(
-                        EventType.RESPONSE_CAPTURED,
-                        {
-                            "url": cap.url,
-                            "len": len(cap.text),
-                            "confidence": cap.classification.confidence,
-                        },
-                        source="engine:capture",
-                    )
+                if request_id:
+                    self._pending_capture_fetches.append(request_id)
             except Exception as exc:
                 log.debug("on_loading_finished error: %s", exc)
 
@@ -541,6 +524,8 @@ class BrowserIntelligenceEngine:
     async def tick(self, page) -> FeatureStore:
         fv = await self._composer.tick(page)
         self._store.push(fv)
+
+        await self._drain_capture_fetches()
 
         self._update_sensor_confidence(fv)
 
@@ -635,6 +620,43 @@ class BrowserIntelligenceEngine:
             and fv.tokens_per_second < 0.01
             and fv.stream_idle_time > STREAM_STALLED_IDLE_SECONDS
         )
+
+    async def _drain_capture_fetches(self) -> None:
+        while self._pending_capture_fetches:
+            request_id = self._pending_capture_fetches.pop(0)
+            try:
+                if self._cdp_session is None:
+                    self._capture.close_response(request_id)
+                    continue
+                resp = await self._cdp_session.send(
+                    "Network.getResponseBody", {"requestId": request_id}
+                )
+                body = resp.get("body", "") if isinstance(resp, dict) else ""
+                if body and len(body) > 10:
+                    self._capture.append_chunk(request_id, body)
+            except Exception:
+                pass
+            finally:
+                cap = self._capture.close_response(request_id)
+                if cap is not None and cap.classification and cap.classification.is_chat:
+                    self._events.publish(
+                        EventType.GENERATION_COMPLETED,
+                        {
+                            "url": cap.url,
+                            "bytes": cap.bytes,
+                            "chunks": cap.chunks,
+                        },
+                        source="engine:capture",
+                    )
+                    self._events.publish(
+                        EventType.RESPONSE_CAPTURED,
+                        {
+                            "url": cap.url,
+                            "len": len(cap.text),
+                            "confidence": cap.classification.confidence,
+                        },
+                        source="engine:capture",
+                    )
 
     def is_response_complete(self) -> tuple[bool, float]:
         return self._completion.is_complete(self._store)
@@ -808,6 +830,7 @@ class BrowserIntelligenceEngine:
         self._composer.reset()
         self._fusion.reset()
         self._capture.reset()
+        self._pending_capture_fetches.clear()
         self._belief = None
         self._ready_for_prompt = False
         self._is_error = False

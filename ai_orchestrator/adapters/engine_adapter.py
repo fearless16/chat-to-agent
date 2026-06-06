@@ -103,35 +103,69 @@ FETCH_INTERCEPT_SCRIPT = """(() => {
     window.__engine_adapter_hook__ = true;
     window.__engine_response_bodies__ = [];
 
-    const origFetch = window.fetch;
-    window.fetch = function(...args) {
-        return origFetch.apply(this, args).then(async (resp) => {
-            const clone = resp.clone();
-            const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
-            try {
-                const text = await clone.text();
-                if (text && text.length > 10) {
-                    window.__engine_response_bodies__.push({
-                        url: url.substring(0, 200),
-                        text: text.substring(0, 8000),
-                        time: Date.now(),
-                    });
-                    if (window.__engine_response_bodies__.length > 20) {
-                        window.__engine_response_bodies__.shift();
-                    }
+    function _storeBody(url, text, transport) {
+        if (text && text.length > 10) {
+            window.__engine_response_bodies__.push({
+                url: (url || '').substring(0, 200),
+                text: text.substring(0, 8000),
+                time: Date.now(),
+                transport: transport || 'fetch',
+            });
+            if (window.__engine_response_bodies__.length > 20) {
+                window.__engine_response_bodies__.shift();
+            }
+        }
+    }
+
+    function _readStreamBody(response, url) {
+        if (!response.body || !response.body.getReader) return null;
+        var reader = response.body.getReader();
+        var decoder = new TextDecoder('utf-8');
+        var chunks = [];
+        var done = false;
+        function pump() {
+            return reader.read().then(function(result) {
+                if (result.value) {
+                    chunks.push(decoder.decode(result.value, {stream: true}));
                 }
-            } catch (_) {}
+                if (result.done) {
+                    done = true;
+                    chunks.push(decoder.decode());
+                    _storeBody(url, chunks.join(''), 'fetch_stream');
+                    return;
+                }
+                return pump();
+            }).catch(function() {});
+        }
+        pump();
+        return null;
+    }
+
+    var origFetch = window.fetch;
+    window.fetch = function(...args) {
+        return origFetch.apply(this, args).then(function(resp) {
+            var url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || '';
+            var ct = (resp.headers && resp.headers.get) ? (resp.headers.get('content-type') || '') : '';
+            if (ct.indexOf('text/event-stream') !== -1) {
+                var clone = resp.clone();
+                _readStreamBody(clone, url);
+                return resp;
+            }
+            var clone = resp.clone();
+            clone.text().then(function(text) {
+                _storeBody(url, text, 'fetch');
+            }).catch(function() {});
             return resp;
         });
     };
 
-    const origXHROpen = XMLHttpRequest.prototype.open;
+    var origXHROpen = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function(method, url) {
         this.__engine_xhr_url = url;
         return origXHROpen.apply(this, arguments);
     };
 
-    const origXHRSend = XMLHttpRequest.prototype.send;
+    var origXHRSend = XMLHttpRequest.prototype.send;
     XMLHttpRequest.prototype.send = function(body) {
         this.addEventListener('load', function() {
             if (this.responseText && this.responseText.length > 10) {
@@ -149,16 +183,16 @@ FETCH_INTERCEPT_SCRIPT = """(() => {
     };
 
     if (typeof EventSource !== 'undefined') {
-        const OrigEventSource = EventSource;
+        var OrigEventSource = EventSource;
         window.EventSource = function(url, config) {
-            const es = new OrigEventSource(url, config);
-            const chunks = [];
+            var es = new OrigEventSource(url, config);
+            var chunks = [];
             es.addEventListener('message', function(e) {
                 if (e.data) chunks.push(e.data);
             });
             es.addEventListener('error', function() {
                 if (chunks.length > 0) {
-                    const text = chunks.join('');
+                    var text = chunks.join('');
                     if (text.length > 10 && text !== '[DONE]') {
                         window.__engine_response_bodies__.push({
                             url: (typeof url === 'string' ? url : '').substring(0, 200),
@@ -169,10 +203,10 @@ FETCH_INTERCEPT_SCRIPT = """(() => {
                     }
                 }
             });
-            const origClose = es.close.bind(es);
+            var origClose = es.close.bind(es);
             es.close = function() {
                 if (chunks.length > 0) {
-                    const text = chunks.join('');
+                    var text = chunks.join('');
                     if (text.length > 10 && text !== '[DONE]') {
                         window.__engine_response_bodies__.push({
                             url: (typeof url === 'string' ? url : '').substring(0, 200),
@@ -521,6 +555,9 @@ class EngineUIAdapter(ProviderAdapter):
         "chat/completions",
         "/chat/message",
         "/v1/messages",
+        "/v1/chats",
+        "/api/v1/chat",
+        "/api/chat",
         "/conversation/message",
         "sendmessage",
         "send_message",
