@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Optional
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +28,7 @@ class WSObserver:
         self.connection_open: bool = False
         self._active_ws_urls: set[str] = set()
         self._frame_buffer: list[dict] = []
+        self._response_text: str = ""
 
     def on_ws_created(self, event: dict) -> None:
         url = event.get("url", "")
@@ -76,10 +76,9 @@ class WSObserver:
                 self.stream_closed = True
                 self.stream_active = False
 
-            if not payload_stripped:
-                if self.data_frame_count > 0:
-                    self.stream_closed = True
-                    self.stream_active = False
+            if not payload_stripped and self.data_frame_count > 0:
+                self.stream_closed = True
+                self.stream_active = False
 
             self._frame_buffer.append({
                 "timestamp": now,
@@ -90,7 +89,12 @@ class WSObserver:
             if len(self._frame_buffer) > 500:
                 self._frame_buffer.pop(0)
 
-    def tokens_per_second(self, now: Optional[float] = None) -> float:
+            if payload_stripped and payload_stripped != "[DONE]":
+                self._response_text += payload + "\n"
+                if len(self._response_text) > 1_000_000:
+                    self._response_text = self._response_text[-1_000_000:]
+
+    def tokens_per_second(self, now: float | None = None) -> float:
         if now is None:
             now = time.monotonic()
         if self.data_frame_count == 0 or self.first_frame_time == 0.0:
@@ -100,7 +104,7 @@ class WSObserver:
             return 0.0
         return self.data_frame_count / elapsed
 
-    def stream_idle_time(self, now: Optional[float] = None) -> float:
+    def stream_idle_time(self, now: float | None = None) -> float:
         if now is None:
             now = time.monotonic()
         if self.last_frame_time == 0.0 or not self.stream_active:
@@ -119,6 +123,7 @@ class WSObserver:
         self.connection_open = False
         self._active_ws_urls.clear()
         self._frame_buffer.clear()
+        self._response_text = ""
 
     @property
     def active_connection_count(self) -> int:
@@ -138,3 +143,7 @@ class WSObserver:
             return True
         except (json.JSONDecodeError, ValueError):
             return False
+
+    def get_response_text(self) -> str:
+        """Return the concatenated WebSocket frame payloads received so far."""
+        return self._response_text

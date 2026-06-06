@@ -1,0 +1,7 @@
+# Netscape HTTP Cookie File
+# https://curl.haxx.se/rfc/cookie_spec.html
+# This is a generated file! Do not edit.
+
+.xiaomimimo.com	TRUE	/	FALSE	1781864091	serviceToken	"lBp+en8jmZclRZ3zFZn3GCtI+nrqgZtp7RC5ztukuLNxZ216WXcL2oXoS5wX+b52VzDN3qUxZ3Ew2DsByojivdy/e1mpeCPBSUt1eizyQ4oIEJmZU+OftmZy+A33D0goW11izJup++POrEmZEV1+HtBkz6pLdLdzVAMAYra6qEFsUG31DAobNJhN8YzVNxQZUVvI4t/JGUvnydbQPZd0hIs3MBjp2GvGX8gaxv0Dm+OjXEF9og/FA+37zlSbsTYDRavZbzBZW8mZ7DCvpOp7TPupBBEne665fSZCXGgnuS6dbuDovSs5I4u0gvU2Cb6Q63gEswLhn61+OqVCm3BatWy7bOjfzpGbzjKngyYdS5Q="
+.xiaomimimo.com	TRUE	/	FALSE	0	userId	5697916973
+.xiaomimimo.com	TRUE	/	FALSE	1781864091	xiaomichatbot_ph	"xHDcRsREJmU0iI4xpH/nYg=="

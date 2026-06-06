@@ -47,31 +47,31 @@ class ResponseKalmanFilter:
         ]
         self.x = x_new
 
-        P = self.P
-        F = self.F
-        FT = self._transpose(F)
-        FP = self._mat_mul(F, P)
-        P_new = self._mat_add(self._mat_mul(FP, FT), self.Q)
+        P = self.P  # noqa: N806
+        F = self.F  # noqa: N806
+        FT = self._transpose(F)  # noqa: N806
+        FP = self._mat_mul(F, P)  # noqa: N806
+        P_new = self._mat_add(self._mat_mul(FP, FT), self.Q)  # noqa: N806
         self.P = P_new
 
         return self.x
 
     def update(self, measurement: float) -> list[float]:
-        H = self.H
-        P = self.P
+        H = self.H  # noqa: N806
+        P = self.P  # noqa: N806
         x = self.x
 
         z_pred = H[0][0] * x[0] + H[0][1] * x[1] + H[0][2] * x[2]
         y = measurement - z_pred
 
-        HP = self._mat_mul(H, P)
-        HT = self._transpose(H)
-        S = self._mat_mul(HP, HT)
+        HP = self._mat_mul(H, P)  # noqa: N806
+        HT = self._transpose(H)  # noqa: N806
+        S = self._mat_mul(HP, HT)  # noqa: N806
         S[0][0] += self.R[0][0]
 
-        S_inv = [[1.0 / max(S[0][0], 1e-10)]]
-        PHT = self._mat_mul(P, HT)
-        K = [[p[0] * S_inv[0][0]] for p in PHT]
+        S_inv = [[1.0 / max(S[0][0], 1e-10)]]  # noqa: N806
+        PHT = self._mat_mul(P, HT)  # noqa: N806
+        K = [[p[0] * S_inv[0][0]] for p in PHT]  # noqa: N806
 
         x_new = [
             x[0] + K[0][0] * y,
@@ -80,14 +80,14 @@ class ResponseKalmanFilter:
         ]
         self.x = x_new
 
-        KH = self._mat_mul(K, H)
-        I = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
-        I_KH = self._mat_sub(I, KH)
-        self.P = self._mat_mul(I_KH, P)
+        KH = self._mat_mul(K, H)  # noqa: N806
+        I_kh = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]  # noqa: N806
+        I_kh_2 = self._mat_sub(I_kh, KH)  # noqa: N806
+        self.P = self._mat_mul(I_kh_2, P)
 
         return self.x
 
-    def smooth(self, measurements: list[float], times: list[float] | None = None) -> list[float]:
+    def smooth(self, measurements: list[float], _times: list[float] | None = None) -> list[float]:
         """Forward-filter only smoothing (causal, real-time safe)."""
         smoothed = []
         for m in measurements:

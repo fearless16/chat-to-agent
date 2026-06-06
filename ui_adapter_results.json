@@ -1,0 +1,65 @@
+[
+  {
+    "provider": "chatgpt_ui",
+    "success": true,
+    "content": "{\"items\":[{\"id\":\"6a23d734-15b0-83a4-9a7d-de81bcae32ba\",\"title\":\"Math Query\",\"create_time\":\"2026-06-06T08:15:48.965092Z\",\"update_time\":\"2026-06-06T08:15:50.839414Z\",\"pinned_time\":null,\"mapping\":null,\"current_node\":null,\"conversation_template_id\":null,\"gizmo_id\":null,\"is_archived\":false,\"is_starred\":null,\"is_temporary_chat\":false,\"is_do_not_remember\":false,\"memory_scope\":\"global_enabled\",\"context_scopes\":[],\"context_scopes_v2\":{\"context_scopes\":[{\"is_siloed\":false,\"scope_namespace\":\"global\",\"sub_s",
+    "error": "",
+    "latency_ms": 21569.70320799155,
+    "model": "chatgpt-ui",
+    "has_storage_state": true
+  },
+  {
+    "provider": "deepseek_ui",
+    "success": false,
+    "content": "",
+    "error": "Timed out waiting for page readiness",
+    "latency_ms": 33494.38295798609,
+    "model": "unknown",
+    "has_storage_state": true
+  },
+  {
+    "provider": "kimi_ui",
+    "success": false,
+    "content": "",
+    "error": "Timed out waiting for page readiness",
+    "latency_ms": 88315.07137499284,
+    "model": "unknown",
+    "has_storage_state": true
+  },
+  {
+    "provider": "z_ai_ui",
+    "success": true,
+    "content": "1.  **Analyze the Request:**\n    *   Question: What is 2+2?\n    *   Constraint: Reply in ONE word only.\n\n2.  **Determine the Answer:**\n    *   2 + 2 = 4\n\n3.  **Format the Output:**\n    *   The answer is \"4\" or \"Four\".\n    *   Both are one word. \"4\" is a single token/word. \"Four\" is also one word. \"4\" is more direct.\n\n4.  **Final Verification:**\n    *   Does the output contain exactly one word? Yes.\n    *   Is the answer correct? Yes.Four",
+    "error": "",
+    "latency_ms": 15028.629125008592,
+    "model": "z-ai-ui",
+    "has_storage_state": true
+  },
+  {
+    "provider": "xiaomimimo_ui",
+    "success": false,
+    "content": "",
+    "error": "Timed out waiting for page readiness",
+    "latency_ms": 33285.999791987706,
+    "model": "unknown",
+    "has_storage_state": true
+  },
+  {
+    "provider": "minimax_ui",
+    "success": false,
+    "content": "",
+    "error": "Engine error state: error",
+    "latency_ms": 15296.376291982597,
+    "model": "unknown",
+    "has_storage_state": true
+  },
+  {
+    "provider": "qwen_ui",
+    "success": true,
+    "content": "{\"success\":true,\"request_id\":\"b3e8ff3e-5b7b-4143-aca3-5172a542ce49\",\"data\":[{\"id\":\"b2c8868a-0a95-488c-b393-df55d970a9ac\",\"title\":\"New Chat\",\"updated_at\":1780733955,\"created_at\":1780733955,\"chat_type\":\"t2t\",\"project_id\":\"\",\"pinned\":false},{\"id\":\"242485ed-50e8-4a41-a8f0-ddbd01be5336\",\"title\":\"Simple Arithmetic Answer\",\"updated_at\":1780733654,\"created_at\":1780733648,\"chat_type\":\"t2t\",\"project_id\":\"\",\"pinned\":false},{\"id\":\"065885a7-16e6-4422-9b46-602afd229e49\",\"title\":\"Basic Arithmetic Answer\",\"upda",
+    "error": "",
+    "latency_ms": 10601.156167016597,
+    "model": "qwen-ui",
+    "has_storage_state": true
+  }
+]

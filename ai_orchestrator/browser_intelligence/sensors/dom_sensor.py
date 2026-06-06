@@ -21,15 +21,36 @@ _DOM_EVAL_SCRIPT = """
         }
         return false;
     }
+    const INPUT_SEL = [
+        'textarea', '[contenteditable="true"]',
+        '[role="textbox"]', '[class*="prompt-textarea"]',
+    ];
+    const SEND_SEL = [
+        'button[type="submit"]', '[aria-label*="send" i]',
+        '[data-testid="send-button"]', 'button:has(svg)',
+    ];
+    const STOP_SEL = [
+        '[aria-label*="stop" i]', '[data-testid="stop-button"]',
+        '[class*="stop-generating"]',
+    ];
+    const REGEN_SEL = [
+        '[aria-label*="regenerate" i]', '[data-testid="regenerate"]',
+    ];
+    const ERR_SEL = ['[class*="error"]', '[class*="alert"]', '[role="alert"]'];
+    const AUTH_SEL = [
+        '[class*="login"]', '[class*="signin"]', 'input[type="password"]',
+    ];
     return {
-        input_visible: any(['textarea','[contenteditable="true"]','[role="textbox"]','[class*="prompt-textarea"]']),
-        send_visible: any(['button[type="submit"]','[aria-label*="send" i]','[data-testid="send-button"]','button:has(svg)']),
-        stop_visible: any(['[aria-label*="stop" i]','[data-testid="stop-button"]','[class*="stop-generating"]']),
-        regenerate_visible: any(['[aria-label*="regenerate" i]','[data-testid="regenerate"]']),
-        error_visible: any(['[class*="error"]','[class*="alert"]','[role="alert"]']),
-        auth_visible: any(['[class*="login"]','[class*="signin"]','input[type="password"]']),
+        input_visible: any(INPUT_SEL),
+        send_visible: any(SEND_SEL),
+        stop_visible: any(STOP_SEL),
+        regenerate_visible: any(REGEN_SEL),
+        error_visible: any(ERR_SEL),
+        auth_visible: any(AUTH_SEL),
         dom_nodes: document.querySelectorAll('*').length,
-        interactive: document.querySelectorAll('button,input,textarea,[contenteditable]').length,
+        interactive: document.querySelectorAll(
+            'button,input,textarea,[contenteditable]'
+        ).length,
     };
 }
 """

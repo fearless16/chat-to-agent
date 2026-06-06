@@ -1,13 +1,11 @@
 """UtilityEngine — computes expected utility for candidate actions.
 
-U(a | b) = Σ_s P(s | b) × R(a, s)
+U(a | b) = Σ_s P(s | b) * R(a, s)
 
 where b = belief state, s = true hidden state, R(a,s) = reward.
 """
 
 from __future__ import annotations
-
-from typing import Optional
 
 from ai_orchestrator.browser_intelligence.estimation.belief_state import (
     BeliefState,
@@ -22,7 +20,7 @@ class UtilityEngine:
         a* = argmax_a Σ_s b(s) · R(a, s)
     """
 
-    def __init__(self, reward_matrix: Optional[dict[tuple[str, HiddenState], float]] = None):
+    def __init__(self, reward_matrix: dict[tuple[str, HiddenState], float] | None = None):
         self._reward = reward_matrix or self._default_rewards()
 
     @staticmethod

@@ -56,12 +56,12 @@ class BeliefState:
         return self.confidence < threshold
 
     @classmethod
-    def uniform(cls) -> "BeliefState":
+    def uniform(cls) -> BeliefState:
         n = len(HiddenState)
         return cls({s: 1.0 / n for s in HiddenState})
 
     @classmethod
-    def certain(cls, state: HiddenState) -> "BeliefState":
+    def certain(cls, state: HiddenState) -> BeliefState:
         probs = {s: 0.0 for s in HiddenState}
         probs[state] = 1.0
         return cls(probs)

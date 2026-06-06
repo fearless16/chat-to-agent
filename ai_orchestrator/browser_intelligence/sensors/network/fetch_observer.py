@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Optional
 
 log = logging.getLogger(__name__)
 
@@ -25,6 +24,7 @@ class FetchObserver:
         self.stream_closed: bool = False
         self._active_stream_request_ids: set[str] = set()
         self._data_buffer: list[dict] = []
+        self._response_text: str = ""
 
     def on_response_received(self, event: dict) -> bool:
         response = event.get("response", {})
@@ -43,7 +43,8 @@ class FetchObserver:
         request_id = event.get("requestId", "")
         is_streaming = False
 
-        if request_id and ("chunked" in transfer_encoding or self._is_streaming_content(content_type)):
+        is_chunked = "chunked" in transfer_encoding
+        if request_id and (is_chunked or self._is_streaming_content(content_type)):
             self._active_stream_request_ids.add(request_id)
             self.stream_active = True
             self.stream_closed = False
@@ -85,6 +86,8 @@ class FetchObserver:
         if not self._active_stream_request_ids and self.chunk_count > 0:
             self.stream_closed = True
             self.stream_active = False
+            # Try to grab the full body from CDP for chunked fetch streams.
+            self._try_fetch_body(request_id)
 
     def on_loading_failed(self, event: dict) -> None:
         request_id = event.get("requestId", "")
@@ -94,7 +97,31 @@ class FetchObserver:
             self.stream_closed = True
             self.stream_active = False
 
-    def tokens_per_second(self, now: Optional[float] = None) -> float:
+    def set_cdp_session(self, cdp_session) -> None:
+        """Inject the CDP session so we can call Network.getResponseBody
+        on loading_finished to capture the full stream body."""
+        self._cdp_session = cdp_session
+
+    async def _try_fetch_body(self, request_id: str) -> None:
+        if not self._cdp_session or not request_id:
+            return
+        try:
+            resp = await self._cdp_session.send(
+                "Network.getResponseBody", {"requestId": request_id}
+            )
+            body = resp.get("body", "") if isinstance(resp, dict) else ""
+            if body and not body.startswith("data:"):
+                self._response_text += body
+                if len(self._response_text) > 1_000_000:
+                    self._response_text = self._response_text[-1_000_000:]
+        except Exception:
+            pass
+
+    def get_response_text(self) -> str:
+        """Return the full body text for chunked fetch responses (if captured)."""
+        return self._response_text
+
+    def tokens_per_second(self, now: float | None = None) -> float:
         if now is None:
             now = time.monotonic()
         if self.chunk_count == 0 or self.first_data_time == 0.0:
@@ -104,7 +131,7 @@ class FetchObserver:
             return 0.0
         return self.chunk_count / elapsed
 
-    def stream_idle_time(self, now: Optional[float] = None) -> float:
+    def stream_idle_time(self, now: float | None = None) -> float:
         if now is None:
             now = time.monotonic()
         if self.last_data_time == 0.0 or not self.stream_active:
@@ -120,6 +147,7 @@ class FetchObserver:
         self.stream_closed = False
         self._active_stream_request_ids.clear()
         self._data_buffer.clear()
+        self._response_text = ""
 
     @staticmethod
     def _is_streaming_content(content_type: str) -> bool:

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Optional
 
 from ai_orchestrator.browser_intelligence.features.feature_vector import FeatureVector
 from ai_orchestrator.browser_intelligence.sensors.accessibility_sensor import (
@@ -31,12 +30,12 @@ class FeatureComposer:
 
     def __init__(
         self,
-        dom_sensor: Optional[DOMSensor] = None,
-        accessibility_sensor: Optional[AccessibilitySensor] = None,
-        network_sensor: Optional[NetworkSensor] = None,
-        mutation_sensor: Optional[MutationSensor] = None,
-        visual_sensor: Optional[VisualSensor] = None,
-        performance_sensor: Optional[PerformanceSensor] = None,
+        dom_sensor: DOMSensor | None = None,
+        accessibility_sensor: AccessibilitySensor | None = None,
+        network_sensor: NetworkSensor | None = None,
+        mutation_sensor: MutationSensor | None = None,
+        visual_sensor: VisualSensor | None = None,
+        performance_sensor: PerformanceSensor | None = None,
         response_extractor=None,
     ):
         self._dom = dom_sensor or DOMSensor()
@@ -114,6 +113,9 @@ class FeatureComposer:
             response_length=response_length,
             response_length_delta=response_length_delta,
             visual_stability=vis.visual_stability,
+            a11y_extraction_success=a11y.extraction_success,
+            a11y_confidence=a11y.accessibility_confidence,
+            a11y_node_count=a11y.snapshot_node_count,
             page_title=page_title,
             url=url,
         )
@@ -127,7 +129,8 @@ class FeatureComposer:
     def reset(self) -> None:
         self._tick = 0
         self._prev_response_length = 0
-        for sensor in [self._dom, self._a11y, self._network, self._mutation, self._visual, self._perf]:
+        sensors = [self._dom, self._a11y, self._network, self._mutation, self._visual, self._perf]
+        for sensor in sensors:
             sensor.reset()
 
     @staticmethod

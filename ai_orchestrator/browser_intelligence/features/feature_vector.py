@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import math
 from collections import deque
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 TICK_INTERVAL: float = 1.0
 
@@ -61,42 +60,54 @@ class FeatureVector:
 
     visual_stability: float = 1.0
 
+    a11y_extraction_success: bool = False
+    a11y_confidence: float = 1.0
+    a11y_node_count: int = 0
+
     page_title: str = ""
     url: str = ""
 
     def to_list(self) -> list[float]:
-        return [
-            float(self.input_visible),
-            float(self.send_enabled),
-            float(self.stop_button_visible),
-            float(self.regenerate_visible),
-            float(self.error_banner_visible),
-            float(self.auth_form_visible),
-            float(self.text_input_count),
-            float(self.button_count),
-            float(self.has_thinking_marker),
-            float(self.has_error_marker),
-            float(self.has_rate_limit_marker),
-            float(self.has_streaming_marker),
-            float(self.stream_active),
-            float(self.transport_detected),
-            float(self.generation_started),
-            float(self.generation_completed),
-            float(self.stream_closed),
-            float(self.generation_stop_detected),
-            float(self.mutation_rate),
-            float(self.mutation_acceleration),
-            float(self.js_heap_used_mb),
-            float(self.page_stability),
-            float(self.response_length),
-            float(self.response_length_delta),
-            float(self.visual_stability),
-            float(self.tokens_per_second),
-            float(self.stream_idle_time),
-            float(self.total_chunks),
-            float(self.bytes_received),
-            float(self.network_request_rate),
+        # Binary features (19): boolean indicators
+        binary = [
+            float(self.input_visible),           # 0
+            float(self.send_enabled),            # 1
+            float(self.stop_button_visible),     # 2
+            float(self.regenerate_visible),      # 3
+            float(self.error_banner_visible),    # 4
+            float(self.auth_form_visible),       # 5
+            float(self.text_input_count > 0),    # 6: has_text_input
+            float(self.button_count > 0),        # 7: has_button
+            float(self.has_thinking_marker),     # 8
+            float(self.has_error_marker),        # 9
+            float(self.has_rate_limit_marker),   # 10
+            float(self.has_streaming_marker),    # 11
+            float(self.stream_active),           # 12
+            float(self.transport_detected),      # 13
+            float(self.generation_started),      # 14
+            float(self.generation_completed),    # 15
+            float(self.stream_closed),           # 16
+            float(self.generation_stop_detected),# 17
+            float(self.a11y_extraction_success), # 18
         ]
+        # Continuous features (14): rates, lengths, counts
+        continuous = [
+            float(self.mutation_rate),           # 0
+            float(self.mutation_acceleration),   # 1
+            float(self.js_heap_used_mb),         # 2
+            float(self.page_stability),          # 3
+            float(self.response_length),         # 4
+            float(self.response_length_delta),   # 5
+            float(self.visual_stability),        # 6
+            float(self.tokens_per_second),       # 7
+            float(self.stream_idle_time),        # 8
+            float(self.total_chunks),            # 9
+            float(self.bytes_received),          # 10
+            float(self.network_request_rate),    # 11
+            float(self.a11y_confidence),         # 12
+            float(self.a11y_node_count),         # 13
+        ]
+        return binary + continuous
 
 
 class FeatureStore:
@@ -125,7 +136,7 @@ class FeatureStore:
         self._buffer.append(fv)
 
     @property
-    def latest(self) -> Optional[FeatureVector]:
+    def latest(self) -> FeatureVector | None:
         return self._buffer[-1] if self._buffer else None
 
     @property

@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
 
@@ -53,15 +52,17 @@ class StreamParser:
         self._prev_chunk_count: int = 0
         self._last_eval_chunk_ts: float = -1.0
 
-    def push_event(self, data: Optional[str] = None, timestamp: Optional[float] = None) -> None:
+    def push_event(self, data: str | None = None, byte_count: int = 0, timestamp: float | None = None) -> None:
         now = timestamp if timestamp is not None else time.monotonic()
 
-        byte_count = 0
         if data:
             try:
                 byte_count = len(data.encode("utf-8"))
             except Exception:
                 byte_count = len(data)
+
+        if byte_count <= 0 and not data:
+            byte_count = 0
 
         self.total_chunks += 1
         self.bytes_received += byte_count
@@ -83,7 +84,7 @@ class StreamParser:
             + (1.0 - self._ema_alpha) * self._ema_token_rate
         )
 
-    def push_bytes(self, byte_count: int, timestamp: Optional[float] = None) -> None:
+    def push_bytes(self, byte_count: int, timestamp: float | None = None) -> None:
         if byte_count <= 0:
             return
         now = timestamp if timestamp is not None else time.monotonic()
@@ -113,7 +114,7 @@ class StreamParser:
     def signal_transport_connected(self) -> None:
         self._transport_disconnected = False
 
-    def evaluate(self, now: Optional[float] = None) -> StreamState:
+    def evaluate(self, now: float | None = None) -> StreamState:
         if now is None:
             now = time.monotonic()
 
@@ -133,11 +134,11 @@ class StreamParser:
                     generation_started = True
 
         stream_closed = False
-        if self.total_chunks > 0:
-            if idle_time > IDLE_THRESHOLD_HARD_TIMEOUT:
-                stream_closed = True
-            elif idle_time > IDLE_THRESHOLD_STREAM_END and self._transport_disconnected:
-                stream_closed = True
+        if self.total_chunks > 0 and (
+            idle_time > IDLE_THRESHOLD_HARD_TIMEOUT
+            or (idle_time > IDLE_THRESHOLD_STREAM_END and self._transport_disconnected)
+        ):
+            stream_closed = True
 
         self._prev_chunk_count = self.total_chunks
         self._last_eval_chunk_ts = self.last_chunk_timestamp

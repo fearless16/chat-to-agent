@@ -181,7 +181,7 @@ class TransitionMatrix:
         """Check ergodicity: every state reachable from every other state."""
         states = list(HiddenState)
         n = len(states)
-        idx = {s: i for i, s in enumerate(states)}
+        {s: i for i, s in enumerate(states)}
         reachable = [[False] * n for _ in range(n)]
         for i, si in enumerate(states):
             for j, sj in enumerate(states):

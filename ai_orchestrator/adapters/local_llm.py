@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-from typing import Optional
 
 import httpx
 
@@ -30,10 +29,10 @@ class LocalLLMAdapter(ProviderAdapter):
         self.model = model
         self.endpoint = endpoint.rstrip("/")
         self._mock_mode = mock_mode
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
     async def send(
-        self, prompt: str, context: Optional[list[dict]] = None
+        self, prompt: str, context: list[dict] | None = None
     ) -> ProviderResponse:
         if self._mock_mode:
             return self._mock_send(prompt, context)
@@ -64,7 +63,7 @@ class LocalLLMAdapter(ProviderAdapter):
             self._client = None
 
     def _mock_send(
-        self, prompt: str, context: Optional[list[dict]] = None
+        self, prompt: str, _context: list[dict] | None = None
     ) -> ProviderResponse:
         return ProviderResponse(
             content=f"Local LLM ({self.model}) response to: {prompt[:50]}",
@@ -74,11 +73,11 @@ class LocalLLMAdapter(ProviderAdapter):
         )
 
     async def _real_send(
-        self, prompt: str, context: Optional[list[dict]] = None
+        self, prompt: str, _context: list[dict] | None = None
     ) -> ProviderResponse:
         t0 = time.monotonic()
         client = await self._get_client()
-        messages = (context or []) + [{"role": "user", "content": prompt}]
+        messages = (_context or []) + [{"role": "user", "content": prompt}]
         try:
             resp = await client.post(
                 f"{self.endpoint}/api/chat",

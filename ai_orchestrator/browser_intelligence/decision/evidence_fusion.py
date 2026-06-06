@@ -9,8 +9,7 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 
 @dataclass
@@ -64,6 +63,7 @@ class EvidenceVector:
     weight: float = 0.0
     source_count: int = 0
     fused_confidence: float = 0.0
+    tick: int = 0
 
 
 class EvidenceFusion:
@@ -81,6 +81,7 @@ class EvidenceFusion:
         self._decay = math.log(2) / half_life_ticks
         self._sensor_confidence: dict[str, SensorConfidence] = {}
         self._evidence_buffer: dict[str, list[EvidenceVector]] = {}
+        self._tick: int = 0
 
     def register_sensor(self, name: str) -> None:
         if name not in self._sensor_confidence:
@@ -107,16 +108,18 @@ class EvidenceFusion:
         }
 
     def submit_evidence(
-        self, sensor_name: str, signal_name: str, value: bool, confidence: Optional[float] = None
+        self, sensor_name: str, signal_name: str, value: bool, confidence: float | None = None
     ) -> EvidenceVector:
         if confidence is None:
             confidence = self.sensor_confidence(sensor_name)
 
+        self._tick += 1
         ev = EvidenceVector(
             signal_name=signal_name,
             value=value,
             weight=max(0.0, min(1.0, confidence)),
             source_count=1,
+            tick=self._tick,
         )
 
         key = f"{sensor_name}:{signal_name}"
@@ -132,23 +135,30 @@ class EvidenceFusion:
     def fused_confidence(self, signal_name: str, max_age_ticks: int = 30) -> float:
         matches: list[EvidenceVector] = []
         for key, evs in self._evidence_buffer.items():
-            if key.endswith(f":{signal_name}"):
-                if evs:
-                    matches.append(evs[-1])
+            if key.endswith(f":{signal_name}") and evs:
+                latest = evs[-1]
+                age = self._tick - latest.tick
+                if age <= max_age_ticks:
+                    matches.append(latest)
 
         if not matches:
             return 0.0
 
         total_weight = 0.0
         for ev in matches:
-            age = self._count_more_recent(ev)
+            age = self._tick - ev.tick
             age_weight = math.exp(-self._decay * age)
             total_weight += ev.weight * age_weight
 
         return min(total_weight / max(len(matches), 1), 1.0)
 
     def _count_more_recent(self, ev: EvidenceVector) -> int:
-        return 0
+        count = 0
+        for evs in self._evidence_buffer.values():
+            for other in evs:
+                if other.tick > ev.tick:
+                    count += 1
+        return count
 
     def clear(self) -> None:
         self._evidence_buffer.clear()
@@ -156,3 +166,4 @@ class EvidenceFusion:
     def reset(self) -> None:
         self._sensor_confidence.clear()
         self._evidence_buffer.clear()
+        self._tick = 0

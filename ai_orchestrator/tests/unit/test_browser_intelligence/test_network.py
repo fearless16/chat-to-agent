@@ -803,3 +803,126 @@ class TestFetchObserver:
         })
         assert obs.bytes_received == 0
         assert obs.chunk_count == 0
+
+
+# ═══════════════════════════════════════════════════════════════
+# P0.6: End-to-end stream → buffer → final text pipeline
+# ═══════════════════════════════════════════════════════════════
+
+class TestNetworkResponseTextPipeline:
+    """Proves that the network layer alone can reconstruct chat text
+    without DOM extraction, fetch interceptions, or window globals."""
+
+    def test_sse_observer_captures_text(self):
+        obs = SSEObserver()
+        obs._active_stream_ids.add("req-1")
+        chunks = [
+            '{"choices":[{"delta":{"content":"Par"}}]}',
+            '{"choices":[{"delta":{"content":"is"}}]}',
+            "[DONE]",
+        ]
+        for chunk in chunks:
+            obs.on_event_source_message_received({
+                "requestId": "req-1",
+                "data": chunk,
+                "eventName": "message",
+            })
+        text = obs.get_response_text()
+        assert "Par" in text
+        assert "is" in text
+        assert "[DONE]" not in text
+
+    def test_ws_observer_captures_text(self):
+        obs = WSObserver()
+        obs.on_ws_created({"url": "wss://chat.example.com/ws"})
+        payloads = [
+            '{"delta":"Paris"}',
+        ]
+        for p in payloads:
+            obs.on_ws_frame_received({
+                "response": {"payloadData": p},
+            })
+        text = obs.get_response_text()
+        assert "Paris" in text
+
+    def test_stream_parser_receives_actual_text_from_observer_buffers(self):
+        sp = StreamParser()
+        sp.push_event(data='{"choices":[{"delta":{"content":"he"}}]}', timestamp=100.0)
+        sp.push_event(data='{"choices":[{"delta":{"content":"llo"}}]}', timestamp=100.5)
+        assert sp.total_chunks == 2
+        assert sp.bytes_received > 0
+        assert sp.average_chunk_size() > 0
+
+    def test_stream_parser_bytes_are_nonzero_when_data_is_present(self):
+        sp = StreamParser()
+        sp.push_event(data=None, timestamp=100.0)
+        assert sp.total_chunks == 1
+        assert sp.bytes_received == 0
+        sp.push_event(data="Paris", timestamp=100.5)
+        assert sp.total_chunks == 2
+        assert sp.bytes_received == len("Paris".encode("utf-8"))
+
+    def test_response_capture_full_pipeline(self):
+        from ai_orchestrator.browser_intelligence.intelligence.response_capture import (
+            ResponseCapture,
+            parse_stream_chunk,
+        )
+        capture = ResponseCapture()
+        capture.begin_response(
+            request_id="r1",
+            url="https://chat.example.com/v1/chat/completions",
+            method="POST",
+            status=200,
+            content_type="text/event-stream",
+        )
+        chunks = [
+            'data: {"choices":[{"delta":{"content":"P"}}]}\n\n',
+            'data: {"choices":[{"delta":{"content":"a"}}]}\n\n',
+            'data: {"choices":[{"delta":{"content":"r"}}]}\n\n',
+            'data: {"choices":[{"delta":{"content":"i"}}]}\n\n',
+            'data: {"choices":[{"delta":{"content":"s"}}]}\n\n',
+        ]
+        for chunk in chunks:
+            parsed = parse_stream_chunk(chunk)
+            assert parsed, f"Chunk should parse: {chunk!r}"
+            capture.append_chunk("r1", parsed)
+        capture.close_response("r1")
+        text = capture.get_response_text()
+        assert "Paris" in text, f"Expected 'Paris' in text, got: {text!r}"
+
+    def test_response_capture_rejects_analytics_at_door(self):
+        from ai_orchestrator.browser_intelligence.intelligence.response_capture import (
+            ResponseCapture,
+        )
+        capture = ResponseCapture()
+        classification = capture.begin_response(
+            request_id="r_analytics",
+            url="https://google-analytics.com/collect?tid=UA-123",
+            method="POST",
+            status=200,
+            content_type="image/gif",
+        )
+        assert not classification.is_chat
+        accepted = capture.append_chunk("r_analytics", "should-be-ignored")
+        assert accepted is False
+        assert capture.get_response_text() == ""
+
+    def test_sse_observer_accumulates_multiple_chunks_into_response_text(self):
+        obs = SSEObserver()
+        obs._active_stream_ids.add("req-a")
+        data_items = [
+            '{"choices":[{"delta":{"content":"Hello"}}]}',
+            '{"choices":[{"delta":{"content":" World"}}]}',
+            '[DONE]',
+        ]
+        for data in data_items:
+            obs.on_event_source_message_received({
+                "requestId": "req-a",
+                "data": data,
+                "eventName": "",
+            })
+        text = obs.get_response_text()
+        assert "Hello" in text
+        assert "World" in text
+        assert obs.bytes_received > 0
+        assert obs.done_seen is True

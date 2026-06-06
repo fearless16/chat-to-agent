@@ -10,7 +10,7 @@ from ai_orchestrator.browser_intelligence.features.feature_vector import Feature
 
 
 def _feature_is_binary(idx: int) -> bool:
-    return idx < 18
+    return idx < 19
 
 
 class EmissionModel:
@@ -24,7 +24,31 @@ class EmissionModel:
     and refined via online learning from observations.
     """
 
-    FEATURE_DIM = 30
+    FEATURE_DIM = 33
+    CONTINUOUS_DIM = 14
+
+    # Feature-specific sigmas for continuous features (indices 0-13):
+    # 0: mutation_rate, 1: mutation_acceleration, 2: js_heap_used_mb,
+    # 3: page_stability, 4: response_length, 5: response_length_delta,
+    # 6: visual_stability, 7: tokens_per_second, 8: stream_idle_time,
+    # 9: total_chunks, 10: bytes_received, 11: network_request_rate,
+    # 12: a11y_confidence, 13: a11y_node_count
+    _DEFAULT_SIGMAS = [
+        10.0,   # mutation_rate
+        5.0,    # mutation_acceleration
+        100.0,  # js_heap_used_mb
+        0.5,    # page_stability (0-1)
+        500.0,  # response_length
+        100.0,  # response_length_delta
+        0.5,    # visual_stability (0-1)
+        20.0,   # tokens_per_second
+        10.0,   # stream_idle_time
+        50.0,   # total_chunks
+        10000.0,  # bytes_received (can be large)
+        5.0,    # network_request_rate
+        0.2,    # a11y_confidence (0-1)
+        30.0,   # a11y_node_count
+    ]
 
     def __init__(self):
         self._binary_params: dict[HiddenState, list[float]] = {}
@@ -38,15 +62,16 @@ class EmissionModel:
 
     def _init_defaults(self) -> None:
         d = self.FEATURE_DIM
+        cd = self.CONTINUOUS_DIM
 
         self._binary_params = {
-            s: [0.4] * 18 for s in HiddenState
+            s: [0.4] * 19 for s in HiddenState
         }
         self._continuous_mu = {
-            s: [0.0] * (d - 18) for s in HiddenState
+            s: [0.0] * cd for s in HiddenState
         }
         self._continuous_sigma = {
-            s: [50.0] * (d - 18) for s in HiddenState
+            s: list(self._DEFAULT_SIGMAS) for s in HiddenState
         }
 
         defaults: dict[HiddenState, list[float]] = {
@@ -54,106 +79,116 @@ class EmissionModel:
                 0.7, 0.7, 0.3, 0.3, 0.3, 0.3,
                 0.7, 0.7, 0.3, 0.3, 0.3, 0.3,
                 0.3, 0.3, 0.3, 0.3, 0.3, 0.3,
-                0.0, 0.0,
+                0.0, 0.0, 0.9,
                 100.0, 1.0,
                 100.0, 0.0, 1.0,
                 0.0, 10.0, 0.0, 0.0, 0.1,
+                0.95, 50.0,
             ],
             HiddenState.GENERATING: [
                 0.7, 0.3, 0.7, 0.3, 0.3, 0.3,
                 0.3, 0.7, 0.3, 0.3, 0.3, 0.7,
                 0.7, 0.7, 0.7, 0.3, 0.3, 0.3,
-                8.0, 1.5,
+                8.0, 1.5, 0.8,
                 300.0, 0.8,
                 300.0, 50.0, 0.8,
                 15.0, 0.2, 50.0, 5000.0, 2.0,
+                0.9, 30.0,
             ],
             HiddenState.COMPLETE: [
                 0.7, 0.7, 0.3, 0.7, 0.3, 0.3,
                 0.7, 0.7, 0.3, 0.3, 0.3, 0.3,
                 0.3, 0.7, 0.3, 0.7, 0.7, 0.7,
-                0.0, 0.0,
+                0.0, 0.0, 0.95,
                 100.0, 1.0,
                 500.0, 0.0, 1.0,
                 0.0, 5.0, 200.0, 20000.0, 0.1,
+                0.95, 40.0,
             ],
             HiddenState.RATE_LIMITED: [
                 0.3, 0.3, 0.3, 0.3, 0.7, 0.3,
                 0.3, 0.3, 0.3, 0.7, 0.7, 0.3,
                 0.3, 0.3, 0.3, 0.3, 0.7, 0.3,
-                0.0, 0.0,
+                0.0, 0.0, 0.3,
                 0.0, 0.0,
                 0.0, 0.0, 0.0,
                 0.0, 20.0, 0.0, 0.0, 0.5,
+                0.2, 10.0,
             ],
             HiddenState.ERROR: [
                 0.3, 0.3, 0.3, 0.3, 0.7, 0.3,
                 0.3, 0.3, 0.7, 0.3, 0.3, 0.3,
                 0.3, 0.3, 0.3, 0.3, 0.7, 0.3,
-                0.0, 0.0,
+                0.0, 0.0, 0.1,
                 0.0, 0.0,
                 0.0, 0.0, 0.0,
                 0.0, 0.0, 0.0, 0.0, 0.0,
+                0.1, 5.0,
             ],
             HiddenState.THINKING: [
                 0.7, 0.3, 0.3, 0.3, 0.3, 0.3,
                 0.3, 0.7, 0.7, 0.3, 0.3, 0.3,
                 0.3, 0.7, 0.7, 0.3, 0.3, 0.3,
-                1.0, -0.1,
+                1.0, -0.1, 0.8,
                 150.0, 1.0,
                 150.0, 10.0, 1.0,
                 0.0, 2.0, 0.0, 0.0, 0.5,
+                0.7, 20.0,
             ],
             HiddenState.AUTH_REQUIRED: [
                 0.3, 0.3, 0.3, 0.3, 0.3, 0.7,
                 0.3, 0.3, 0.3, 0.3, 0.3, 0.3,
                 0.3, 0.3, 0.3, 0.3, 0.3, 0.3,
-                0.0, 0.0,
+                0.0, 0.0, 0.1,
                 0.0, 0.0,
                 0.0, 0.0, 0.0,
                 0.0, 0.0, 0.0, 0.0, 0.0,
+                0.1, 5.0,
             ],
             HiddenState.BOOTING: [
                 0.3, 0.3, 0.3, 0.3, 0.3, 0.3,
                 0.3, 0.3, 0.3, 0.3, 0.3, 0.3,
                 0.3, 0.3, 0.3, 0.3, 0.3, 0.3,
-                0.0, 0.0,
+                0.0, 0.0, 0.3,
                 80.0, 0.3,
                 0.0, 0.0, 0.0,
                 0.0, 30.0, 0.0, 0.0, 0.0,
+                0.3, 20.0,
             ],
             HiddenState.SHADOW_BANNED: [
                 0.7, 0.7, 0.3, 0.7, 0.3, 0.3,
                 0.7, 0.7, 0.3, 0.3, 0.3, 0.3,
                 0.3, 0.7, 0.3, 0.3, 0.7, 0.3,
-                0.0, 0.0,
+                0.0, 0.0, 0.6,
                 0.0, 0.0,
                 0.0, 0.0, 0.0,
                 0.0, 30.0, 0.0, 0.0, 0.0,
+                0.5, 15.0,
             ],
             HiddenState.PROMPT_SENT: [
                 0.7, 0.7, 0.3, 0.3, 0.3, 0.3,
                 0.7, 0.7, 0.3, 0.3, 0.3, 0.3,
                 0.3, 0.7, 0.7, 0.3, 0.3, 0.3,
-                0.0, 0.0,
+                0.0, 0.0, 0.7,
                 0.0, 0.0,
                 0.0, 0.0, 0.0,
                 1.0, 2.0, 0.0, 0.0, 3.0,
+                0.6, 25.0,
             ],
         }
 
         for state, values in defaults.items():
-            for i in range(18):
+            for i in range(19):
                 self._binary_params[state][i] = max(0.05, min(0.95, values[i]))
-            for i in range(self.FEATURE_DIM - 18):
-                self._continuous_mu[state][i] = values[18 + i]
-                self._continuous_sigma[state][i] = 50.0
+            for i in range(self.FEATURE_DIM - 19):
+                self._continuous_mu[state][i] = values[19 + i]
+                # Keep feature-specific sigmas from _DEFAULT_SIGMAS
 
     def emission_prob(self, observation: FeatureVector, state: HiddenState) -> float:
         obs = observation.to_list()
         log_prob = 0.0
 
-        for i in range(18):
+        for i in range(19):
             p = self._binary_params[state][i]
             p = max(0.01, min(0.99, p))
             if obs[i] > 0.5:
@@ -161,8 +196,8 @@ class EmissionModel:
             else:
                 log_prob += math.log(1.0 - p)
 
-        for i in range(18, self.FEATURE_DIM):
-            idx = i - 18
+        for i in range(19, self.FEATURE_DIM):
+            idx = i - 19
             mu = self._continuous_mu[state][idx]
             sigma = max(self._continuous_sigma[state][idx], 0.1)
             diff = obs[i] - mu
@@ -178,14 +213,14 @@ class EmissionModel:
     ) -> None:
         obs = observation.to_list()
 
-        for i in range(18):
+        for i in range(19):
             p = self._binary_params[state][i]
             target = 1.0 if obs[i] > 0.5 else 0.0
             self._binary_params[state][i] = p + learning_rate * (target - p)
             self._binary_params[state][i] = max(0.01, min(0.99, self._binary_params[state][i]))
 
-        for i in range(18, self.FEATURE_DIM):
-            idx = i - 18
+        for i in range(19, self.FEATURE_DIM):
+            idx = i - 19
             old_mu = self._continuous_mu[state][idx]
             diff = obs[i] - old_mu
             self._continuous_mu[state][idx] = old_mu + learning_rate * diff

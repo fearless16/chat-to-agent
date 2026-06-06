@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import enum
 import logging
-from typing import Optional
 
 log = logging.getLogger(__name__)
 
@@ -48,14 +47,11 @@ STREAM_URL_PATTERNS: tuple[str, ...] = (
 )
 
 
-def _content_type_matches(content_type: Optional[str], candidates: frozenset[str]) -> bool:
+def _content_type_matches(content_type: str | None, candidates: frozenset[str]) -> bool:
     if not content_type:
         return False
     ct_lower = content_type.lower().strip()
-    for candidate in candidates:
-        if ct_lower == candidate or ct_lower.startswith(candidate):
-            return True
-    return False
+    return any(ct_lower == candidate or ct_lower.startswith(candidate) for candidate in candidates)
 
 
 def _url_matches(url: str) -> int:
@@ -71,7 +67,7 @@ class ProtocolDetector:
     """
 
     def __init__(self):
-        self._last_content_type: Optional[str] = None
+        self._last_content_type: str | None = None
         self._last_url: str = ""
         self._last_status: int = 0
         self._detection_history: list[tuple[str, float]] = []
@@ -80,12 +76,12 @@ class ProtocolDetector:
         self,
         url: str = "",
         status: int = 0,
-        content_type: Optional[str] = None,
-        response_headers: Optional[dict[str, str]] = None,
+        content_type: str | None = None,
+        response_headers: dict[str, str] | None = None,
     ) -> tuple[TransportProtocol, float]:
         """Analyze a response and return (protocol, confidence).
 
-        Confidence is a float 0.0–1.0 aggregated from multiple signals.
+        Confidence is a float 0.0-1.0 aggregated from multiple signals.
         """
         self._last_url = url
         self._last_status = status

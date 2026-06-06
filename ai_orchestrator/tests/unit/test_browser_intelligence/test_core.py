@@ -47,7 +47,7 @@ class TestFeatureVector:
     def test_to_list_length(self):
         fv = FeatureVector()
         lst = fv.to_list()
-        assert len(lst) == 30
+        assert len(lst) == 33
 
     def test_to_list_values(self):
         fv = FeatureVector(
@@ -306,6 +306,7 @@ class TestHMMEngine:
 
     def test_update_converges_to_ready(self):
         engine = HMMEngine()
+        engine.learning_enabled = False
         engine.initialize()
 
         for _ in range(40):
@@ -329,6 +330,9 @@ class TestHMMEngine:
                 response_length=100,
                 page_stability=1.0,
                 visual_stability=1.0,
+                a11y_extraction_success=True,
+                a11y_confidence=0.9,
+                a11y_node_count=50,
             )
             belief = engine.update(fv)
 
@@ -361,6 +365,9 @@ class TestHMMEngine:
                 response_length=100,
                 page_stability=1.0,
                 visual_stability=1.0,
+                a11y_extraction_success=True,
+                a11y_confidence=0.9,
+                a11y_node_count=50,
             )
             engine.update(fv)
 
@@ -384,6 +391,9 @@ class TestHMMEngine:
                 response_length=300,
                 response_length_delta=50,
                 visual_stability=0.8,
+                a11y_extraction_success=True,
+                a11y_confidence=0.85,
+                a11y_node_count=30,
             )
             belief = engine.update(fv)
 
@@ -405,6 +415,9 @@ class TestHMMEngine:
                 generation_started=True,
                 mutation_rate=8.0,
                 response_length=300,
+                a11y_extraction_success=True,
+                a11y_confidence=0.85,
+                a11y_node_count=30,
             )
             engine.update(fv)
 
@@ -423,6 +436,9 @@ class TestHMMEngine:
                 response_length=500,
                 response_length_delta=0,
                 generation_stop_detected=True,
+                a11y_extraction_success=True,
+                a11y_confidence=0.95,
+                a11y_node_count=40,
             )
             belief = engine.update(fv)
 
@@ -438,6 +454,9 @@ class TestHMMEngine:
                 input_visible=True,
                 send_enabled=True,
                 response_length=100,
+                a11y_extraction_success=True,
+                a11y_confidence=0.9,
+                a11y_node_count=50,
             )
             observations.append(fv)
 
@@ -686,6 +705,7 @@ class TestBrowserIntelligenceEngine:
     def test_engine_no_page_tick(self):
         """Engine handles tick without a real page gracefully via pure data."""
         engine = BrowserIntelligenceEngine()
+        engine._hmm.learning_enabled = False
         engine._hmm.initialize()
 
         for i in range(40):
@@ -709,6 +729,9 @@ class TestBrowserIntelligenceEngine:
                 generation_started=False,
                 generation_completed=False,
                 stream_closed=False,
+                a11y_extraction_success=True,
+                a11y_confidence=0.9,
+                a11y_node_count=50,
             )
             engine._store.push(fv)
             engine._belief = engine._hmm.update(fv)
@@ -718,6 +741,7 @@ class TestBrowserIntelligenceEngine:
 
     def test_state_probabilities(self):
         engine = BrowserIntelligenceEngine()
+        engine._hmm.learning_enabled = False
         engine._hmm.initialize()
         for _ in range(20):
             fv = FeatureVector(
@@ -725,6 +749,9 @@ class TestBrowserIntelligenceEngine:
                 send_enabled=True,
                 response_length=100,
                 page_stability=1.0,
+                a11y_extraction_success=True,
+                a11y_confidence=0.9,
+                a11y_node_count=50,
             )
             engine._store.push(fv)
             engine._belief = engine._hmm.update(fv)
@@ -735,6 +762,7 @@ class TestBrowserIntelligenceEngine:
 
     def test_action_utilities(self):
         engine = BrowserIntelligenceEngine()
+        engine._hmm.learning_enabled = False
         engine._hmm.initialize()
         for _ in range(20):
             fv = FeatureVector(
@@ -742,6 +770,9 @@ class TestBrowserIntelligenceEngine:
                 send_enabled=True,
                 response_length=100,
                 page_stability=1.0,
+                a11y_extraction_success=True,
+                a11y_confidence=0.9,
+                a11y_node_count=50,
             )
             engine._store.push(fv)
             engine._belief = engine._hmm.update(fv)
@@ -777,6 +808,7 @@ class TestBrowserIntelligenceEngine:
 
     def test_rate_limited_detection(self):
         engine = BrowserIntelligenceEngine()
+        engine._hmm.learning_enabled = False
         engine._hmm.initialize()
         for _ in range(40):
             fv = FeatureVector(
@@ -795,6 +827,9 @@ class TestBrowserIntelligenceEngine:
                 response_length=0,
                 page_stability=0.5,
                 visual_stability=0.5,
+                a11y_extraction_success=False,
+                a11y_confidence=0.1,
+                a11y_node_count=0,
             )
             engine._store.push(fv)
             engine._belief = engine._hmm.update(fv)
@@ -822,6 +857,9 @@ class TestBrowserIntelligenceEngine:
                 response_length=0,
                 page_stability=0.3,
                 visual_stability=0.5,
+                a11y_extraction_success=False,
+                a11y_confidence=0.1,
+                a11y_node_count=0,
             )
             engine._store.push(fv)
             engine._belief = engine._hmm.update(fv)
@@ -874,6 +912,9 @@ class TestFullPipeline:
                 response_length=100,
                 page_stability=1.0,
                 visual_stability=1.0,
+                a11y_extraction_success=True,
+                a11y_confidence=0.9,
+                a11y_node_count=50,
             )
             engine._store.push(fv)
             engine._belief = engine._hmm.update(fv)
@@ -896,6 +937,9 @@ class TestFullPipeline:
                 response_length=100 + (i - 10) * 40,
                 response_length_delta=40,
                 visual_stability=0.8,
+                a11y_extraction_success=True,
+                a11y_confidence=0.85,
+                a11y_node_count=30,
             )
             engine._store.push(fv)
             engine._belief = engine._hmm.update(fv)
@@ -920,6 +964,9 @@ class TestFullPipeline:
                 response_length=500,
                 response_length_delta=0,
                 visual_stability=1.0,
+                a11y_extraction_success=True,
+                a11y_confidence=0.95,
+                a11y_node_count=40,
             )
             engine._store.push(fv)
             engine._belief = engine._hmm.update(fv)

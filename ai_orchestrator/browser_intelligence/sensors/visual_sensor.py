@@ -61,7 +61,7 @@ class VisualSensor(BaseSensor):
         if len(current) != len(self._previous_frame):
             return 100.0
         diff_bytes = sum(
-            1 for a, b in zip(current, self._previous_frame) if a != b
+            1 for a, b in zip(current, self._previous_frame, strict=False) if a != b
         )
         return (diff_bytes / max(len(current), 1)) * 100.0
 

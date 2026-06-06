@@ -10,10 +10,10 @@ Network streams are the source of truth. DOM is a rendering artifact.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Optional
 
 from ai_orchestrator.browser_intelligence.sensors.base import BaseSensor
 from ai_orchestrator.browser_intelligence.sensors.network.fetch_observer import (
@@ -100,6 +100,9 @@ class NetworkSensor(BaseSensor):
         self._prev_stream_idle: float = 0.0
         self._prev_observer_chunks: int = 0
         self._prev_observer_bytes: int = 0
+        self._prev_sse_text_len: int = 0
+        self._prev_ws_text_len: int = 0
+        self._prev_fetch_text_len: int = 0
 
     async def attach(self, page) -> None:
         try:
@@ -115,12 +118,11 @@ class NetworkSensor(BaseSensor):
             cdp.on("Network.webSocketClosed", self._on_ws_closed)
             cdp.on("Network.webSocketFrameReceived", self._on_ws_frame)
 
-            try:
+            with contextlib.suppress(Exception):
                 cdp.on("Network.eventSourceMessageReceived", self._on_event_source_message)
-            except Exception:
-                pass
 
             self._cdp_session = cdp
+            self._fetch_observer.set_cdp_session(cdp)
             log.debug("NetworkSensor attached, CDP Network domain enabled")
         except Exception as exc:
             log.debug("CDP attach failed (headless?): %s", exc)
@@ -133,7 +135,7 @@ class NetworkSensor(BaseSensor):
         except Exception:
             pass
 
-    async def sense(self, page) -> NetworkFeatures:
+    async def sense(self, _page) -> NetworkFeatures:
         features = NetworkFeatures()
         try:
             self._drain_queued_events()
@@ -174,7 +176,12 @@ class NetworkSensor(BaseSensor):
             elif self._generation_started and stream_state.stream_active:
                 features.generation_started = True
 
-            if stream_state.stream_closed and self._generation_started and not self._generation_completed:
+            generation_done = (
+                stream_state.stream_closed
+                and self._generation_started
+                and not self._generation_completed
+            )
+            if generation_done:
                 self._generation_completed = True
                 features.generation_completed = True
                 features.stream_closed = True
@@ -213,6 +220,9 @@ class NetworkSensor(BaseSensor):
         self._prev_stream_idle = 0.0
         self._prev_observer_chunks = 0
         self._prev_observer_bytes = 0
+        self._prev_sse_text_len = 0
+        self._prev_ws_text_len = 0
+        self._prev_fetch_text_len = 0
 
         self._protocol_detector.reset()
         self._sse_observer.reset()
@@ -325,7 +335,6 @@ class NetworkSensor(BaseSensor):
         self._fetch_observer.on_loading_finished(event)
 
     def _handle_loading_failed(self, event: dict) -> None:
-        error_text = event.get("errorText", "")
         canceled = event.get("canceled", False)
         if not canceled:
             self._network_errors += 1
@@ -358,24 +367,39 @@ class NetworkSensor(BaseSensor):
         sse_chunks = self._sse_observer.data_chunk_count
         fetch_chunks = self._fetch_observer.chunk_count
 
-        total_aggregated = ws_chunks + sse_chunks + fetch_chunks
-        prev_aggregated = self._prev_observer_chunks
+        sse_text = self._sse_observer.get_response_text()
+        ws_text = self._ws_observer.get_response_text()
+        fetch_text = self._fetch_observer.get_response_text()
 
-        if total_aggregated > prev_aggregated:
-            new_chunks = total_aggregated - prev_aggregated
-            for _ in range(min(new_chunks, 100)):
-                self._stream_parser.push_event(data=None, timestamp=now)
-            self._prev_observer_chunks = total_aggregated
+        sse_text_delta = sse_text[self._prev_sse_text_len:] if len(sse_text) > self._prev_sse_text_len else ""
+        ws_text_delta = ws_text[self._prev_ws_text_len:] if len(ws_text) > self._prev_ws_text_len else ""
+        fetch_text_delta = fetch_text[self._prev_fetch_text_len:] if len(fetch_text) > self._prev_fetch_text_len else ""
+        self._prev_sse_text_len = len(sse_text)
+        self._prev_ws_text_len = len(ws_text)
+        self._prev_fetch_text_len = len(fetch_text)
+
+        combined_text_delta = sse_text_delta + ws_text_delta + fetch_text_delta
 
         se_bytes = self._sse_observer.bytes_received
         ws_bytes = self._ws_observer.bytes_received
         fe_bytes = self._fetch_observer.bytes_received
         total_bytes = se_bytes + ws_bytes + fe_bytes
         prev_bytes = self._prev_observer_bytes
-        if total_bytes > prev_bytes:
-            delta = total_bytes - prev_bytes
-            self._stream_parser.push_bytes(delta, timestamp=now)
-            self._prev_observer_bytes = total_bytes
+        bytes_delta = max(0, total_bytes - prev_bytes)
+
+        if combined_text_delta or bytes_delta > 0:
+            self._stream_parser.push_event(
+                data=combined_text_delta or None,
+                byte_count=bytes_delta,
+                timestamp=now,
+            )
+            if bytes_delta > 0:
+                self._prev_observer_bytes = total_bytes
+
+        total_aggregated = ws_chunks + sse_chunks + fetch_chunks
+        prev_aggregated = self._prev_observer_chunks
+        if total_aggregated > prev_aggregated:
+            self._prev_observer_chunks = total_aggregated
 
         sse_done = self._sse_observer.done_seen and not self._sse_observer.stream_active
         ws_done = self._ws_observer.done_seen and not self._ws_observer.connection_open

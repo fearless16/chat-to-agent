@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import time
-from typing import Optional
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +33,7 @@ class SSEObserver:
         self._active_stream_ids: set[str] = set()
         self._event_buffer: list[dict] = []
         self._request_id_to_url: dict[str, str] = {}
+        self._response_text: str = ""
 
     def on_request_will_be_sent(self, event: dict) -> None:
         request = event.get("request", {})
@@ -103,6 +102,11 @@ class SSEObserver:
             if len(self._event_buffer) > 500:
                 self._event_buffer.pop(0)
 
+            if stripped and stripped != "[DONE]":
+                self._response_text += data + "\n"
+                if len(self._response_text) > 1_000_000:
+                    self._response_text = self._response_text[-1_000_000:]
+
     def on_loading_finished(self, event: dict) -> None:
         request_id = event.get("requestId", "")
         if request_id in self._active_stream_ids:
@@ -121,7 +125,7 @@ class SSEObserver:
             self.stream_closed = True
             self.stream_active = False
 
-    def tokens_per_second(self, now: Optional[float] = None) -> float:
+    def tokens_per_second(self, now: float | None = None) -> float:
         if now is None:
             now = time.monotonic()
         if self.data_chunk_count == 0 or self.first_event_time == 0.0:
@@ -131,7 +135,7 @@ class SSEObserver:
             return 0.0
         return self.data_chunk_count / elapsed
 
-    def stream_idle_time(self, now: Optional[float] = None) -> float:
+    def stream_idle_time(self, now: float | None = None) -> float:
         if now is None:
             now = time.monotonic()
         if self.last_event_time == 0.0 or not self.stream_active:
@@ -150,6 +154,7 @@ class SSEObserver:
         self._active_stream_ids.clear()
         self._event_buffer.clear()
         self._request_id_to_url.clear()
+        self._response_text = ""
 
     @staticmethod
     def _is_event_stream(content_type: str) -> bool:
@@ -159,3 +164,7 @@ class SSEObserver:
             if content_type == ct or content_type.startswith(ct):
                 return True
         return False
+
+    def get_response_text(self) -> str:
+        """Return the concatenated SSE `data:` payload text received so far."""
+        return self._response_text

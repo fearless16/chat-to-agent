@@ -71,11 +71,28 @@ class AccessibilityRuntime:
     """
 
     async def snapshot(self, page) -> A11ySnapshot:
-        raw = await page.aria_snapshot()
+        """Take accessibility snapshot.
+
+        Uses Playwright page.aria_snapshot() which returns a YAML-like
+        accessibility tree. This is the stable, supported API in
+        Playwright >=1.30. Falls back to the legacy
+        page.accessibility.snapshot() CDP path for older versions.
+        """
+        raw = None
+        try:
+            raw = await page.aria_snapshot()
+        except AttributeError:
+            try:
+                raw = await page.accessibility.snapshot()
+            except AttributeError:
+                return A11ySnapshot()
+        except Exception:
+            return A11ySnapshot()
+
         if raw is None:
             return A11ySnapshot()
 
-        root = self._parse_aria_yaml(raw)
+        root = self._parse_node(raw)
         flat: list[A11yNode] = []
         self._flatten(root, flat)
         return A11ySnapshot(root=root, _flat=flat)

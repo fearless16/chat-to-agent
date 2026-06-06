@@ -6,8 +6,6 @@ Observes response_length(t) → velocity → acceleration → completion confide
 
 from __future__ import annotations
 
-from typing import Optional
-
 from ai_orchestrator.browser_intelligence.estimation.kalman_filter import ResponseKalmanFilter
 from ai_orchestrator.browser_intelligence.features.feature_vector import FeatureStore
 

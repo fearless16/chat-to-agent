@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import AsyncIterator, Optional
+from collections.abc import AsyncIterator
 
 from pydantic import BaseModel, Field
 
@@ -15,10 +15,10 @@ class ProviderResponse(BaseModel):
 
     content: str = Field(default="")
     model: str = Field(default="unknown")
-    usage: Optional[dict] = Field(default=None)
+    usage: dict | None = Field(default=None)
     latency_ms: float = Field(default=0.0)
     success: bool = Field(default=True)
-    error: Optional[str] = Field(default=None)
+    error: str | None = Field(default=None)
 
     @property
     def is_valid(self) -> bool:
@@ -47,7 +47,7 @@ class ProviderAdapter(ABC):
         )
         self._call_count = 0
         self._validate_responses = validate_responses
-        self._validator: Optional["ResponseValidator"] = None  # noqa: F821
+        self._validator: ResponseValidator | None = None  # noqa: F821
 
     def _lazy_init_validator(self) -> None:
         if self._validator is None and self._validate_responses:
@@ -56,12 +56,12 @@ class ProviderAdapter(ABC):
 
     @abstractmethod
     async def send(
-        self, prompt: str, context: Optional[list[dict]] = None
+        self, prompt: str, context: list[dict] | None = None
     ) -> ProviderResponse:
         ...
 
     async def protected_send(
-        self, prompt: str, context: Optional[list[dict]] = None
+        self, prompt: str, context: list[dict] | None = None
     ) -> ProviderResponse:
         """Send with circuit breaker + optional response validation.
 
@@ -87,9 +87,10 @@ class ProviderAdapter(ABC):
                     response, prompt=prompt,
                 )
                 if not validation.passed:
+                    err_msg = validation.errors[0].message if validation.errors else "unknown"
                     return ProviderResponse(
                         success=False,
-                        error=f"Validation failed: {validation.errors[0].message if validation.errors else 'unknown'}",
+                        error=f"Validation failed: {err_msg}",
                         latency_ms=response.latency_ms,
                     )
             return response
@@ -125,10 +126,10 @@ class ProviderAdapter(ABC):
         ...
 
     async def send_stream(
-        self, prompt: str, context: Optional[list[dict]] = None
-    ) -> AsyncIterator[Optional[ProviderResponse]]:
+        self, _prompt: str, _context: list[dict] | None = None
+    ) -> AsyncIterator[ProviderResponse | None]:
         """Optional async generator for streaming responses."""
         yield None
 
-    async def close(self) -> None:
+    async def close(self) -> None:  # noqa: B027
         """Clean up any resources (browser, connections)."""

@@ -6,8 +6,6 @@ selector reliability, accessibility reliability, and network reliability.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from ai_orchestrator.browser_intelligence.estimation.belief_state import BeliefState
 
 
@@ -18,7 +16,7 @@ class ConfidenceEngine:
     current belief and observations support the decision.
     """
 
-    def __init__(self, weights: Optional[dict[str, float]] = None):
+    def __init__(self, weights: dict[str, float] | None = None):
         self._weights = weights or {
             "observation": 0.25,
             "historical": 0.25,
@@ -52,4 +50,4 @@ class ConfidenceEngine:
         max_entropy = math.log2(10)
         if max_entropy == 0:
             return 1.0
-        return 1.0 - belief.entropy / max_entropy
+        return max(0.0, min(1.0, 1.0 - belief.entropy / max_entropy))

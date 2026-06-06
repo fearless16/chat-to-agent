@@ -2,21 +2,37 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import asyncio
+import json
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import psutil
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
+from ai_orchestrator.adapters.base import ProviderAdapter, ProviderResponse
+from ai_orchestrator.adapters.chatgpt_ui import ChatGPTUIAdapter
+from ai_orchestrator.adapters.deepseek_ui import DeepSeekUIAdapter
+from ai_orchestrator.adapters.engine_adapter import EngineUIAdapter
+from ai_orchestrator.adapters.kimi_ui import KimiUIAdapter
+from ai_orchestrator.adapters.local_llm import LocalLLMAdapter
+from ai_orchestrator.adapters.minimax_ui import MiniMaxUIAdapter
+from ai_orchestrator.adapters.qwen_ui import QwenUIAdapter
+from ai_orchestrator.adapters.xiaomimimo_ui import XiaomiMiMoUIAdapter
+from ai_orchestrator.adapters.zai_ui import ZAIUIAdapter
 from ai_orchestrator.models.account import Account, AccountState
 from ai_orchestrator.models.capabilities import PROVIDER_PROFILES, TaskRequirements
 from ai_orchestrator.models.lease import Lease
 from ai_orchestrator.models.task import Task, TaskPriority, TaskStatus, TaskType
 from ai_orchestrator.orchestrator.lease_manager import LeaseManager
 from ai_orchestrator.orchestrator.provider_router import ProviderRouter
-from ai_orchestrator.orchestrator.resource_scheduler import ResourceScheduler, SystemResources, WatermarkLevel
+from ai_orchestrator.orchestrator.resource_scheduler import (
+    ResourceScheduler,
+    SystemResources,
+    WatermarkLevel,
+)
 from ai_orchestrator.orchestrator.workflow_engine import WorkflowEngine
 
 app = FastAPI(title="AI Orchestrator", version="0.1.0")
@@ -27,12 +43,12 @@ provider_router = ProviderRouter()
 resource_scheduler = ResourceScheduler(configured_max_agents=10)
 workflow_engine = WorkflowEngine()
 _active_tasks: dict[str, Task] = {}
-_workspaces: dict[str, "FileWorkspace"] = {}  # task_id → workspace
+_workspaces: dict[str, FileWorkspace] = {}  # task_id → workspace
 
 # Lazy-loaded singletons (created on first use)
-_sandbox: "Sandbox | None" = None
-_test_runner: "TestRunner | None" = None
-_runtime_loop: "RuntimeLoop | None" = None
+_sandbox: Sandbox | None = None
+_test_runner: TestRunner | None = None
+_runtime_loop: RuntimeLoop | None = None
 _default_workspace_root: Path | None = None
 
 
@@ -51,10 +67,10 @@ class TaskResponse(BaseModel):
     priority: TaskPriority
     task_type: TaskType
     current_step: str
-    error_message: Optional[str] = None
+    error_message: str | None = None
     created_at: datetime
     updated_at: datetime
-    completed_at: Optional[datetime] = None
+    completed_at: datetime | None = None
 
 class AccountResponse(BaseModel):
     id: str
@@ -82,8 +98,8 @@ class LeaseResponse(BaseModel):
     task_id: str
     agent_id: str
     state: str
-    acquired_at: Optional[datetime] = None
-    expires_at: Optional[datetime] = None
+    acquired_at: datetime | None = None
+    expires_at: datetime | None = None
     is_alive: bool
 
 class WorkspaceResponse(BaseModel):
@@ -101,27 +117,122 @@ class RunLoopResponse(BaseModel):
     total_tests: int
 
 
+class ChatRequest(BaseModel):
+    prompt: str
+    provider: str | None = None
+    providers: list[str] | None = None
+    parallel: bool = False
+    mock_mode: bool = True
+    context: list[dict] | None = None
+
+
+class ChatResult(BaseModel):
+    provider: str
+    success: bool
+    content: str
+    model: str
+    latency_ms: float
+    error: str | None = None
+
+
+class ChatResponse(BaseModel):
+    prompt: str
+    results: list[ChatResult]
+    total_latency_ms: float
+
+
+_PROVIDER_CLASS_MAP: dict[str, type[ProviderAdapter]] = {
+    "chatgpt_ui": ChatGPTUIAdapter,
+    "deepseek_ui": DeepSeekUIAdapter,
+    "kimi_ui": KimiUIAdapter,
+    "qwen_ui": QwenUIAdapter,
+    "z_ai_ui": ZAIUIAdapter,
+    "xiaomimimo_ui": XiaomiMiMoUIAdapter,
+    "minimax_ui": MiniMaxUIAdapter,
+    "local_llm": LocalLLMAdapter,
+}
+
+
+def _load_auth_for(provider: str) -> dict | None:
+    """Resolve a Playwright storage_state dict for *provider*.
+
+    Looks for ``profiles/<provider>_cookies.txt`` (Netscape export) or
+    ``<provider>_auth.json`` in the repo root (Playwright storage_state).
+    """
+    cookie_path = Path(f"profiles/{provider}_cookies.txt")
+    if cookie_path.exists():
+        from ai_orchestrator.adapters.cookie_to_storage_state import (
+            netscape_cookies_to_storage_state,
+        )
+        return netscape_cookies_to_storage_state(cookie_path)
+    auth_path = Path(f"{provider}_auth.json")
+    if auth_path.exists():
+        with auth_path.open() as fh:
+            return json.load(fh)
+    return None
+
+
+def _build_adapter(
+    provider: str,
+    mock_mode: bool,
+) -> ProviderAdapter:
+    """Construct an adapter for *provider* with auth wired in from disk."""
+    cls = _PROVIDER_CLASS_MAP.get(provider)
+    if cls is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown provider {provider!r}; available: {sorted(_PROVIDER_CLASS_MAP)}",
+        )
+    if cls is LocalLLMAdapter:
+        return cls(mock_mode=mock_mode)
+    storage_state = None if mock_mode else _load_auth_for(provider)
+    return cls(
+        mock_mode=mock_mode,
+        headless=True,
+        stealth=True,
+        timeout_ms=90_000,
+        storage_state=storage_state,
+        persistent_profile=None,
+        channel="chromium",
+    )
+
+
+def _to_chat_result(resp: ProviderResponse, provider: str) -> ChatResult:
+    return ChatResult(
+        provider=provider,
+        success=resp.success,
+        content=resp.content,
+        model=resp.model,
+        latency_ms=resp.latency_ms,
+        error=resp.error,
+    )
+
+
 # ── Startup / shutdown ───────────────────────────────────────────
 
 @app.on_event("startup")
 async def startup() -> None:
     """Register default provider accounts on startup."""
     default_accounts = [
-        Account(id="openai:prod-01", provider="chatgpt_api", state=AccountState.IDLE,
-                context_limit=32_768, rate_limit_rpm=60),
-        Account(id="openai:prod-02", provider="chatgpt_api", state=AccountState.IDLE,
-                context_limit=32_768, rate_limit_rpm=60),
-        Account(id="qwen:prod-01", provider="qwen", state=AccountState.IDLE,
-                context_limit=131_072, rate_limit_rpm=100),
-        Account(id="deepseek:prod-01", provider="deepseek", state=AccountState.IDLE,
-                context_limit=1_000_000, rate_limit_rpm=120),
-        Account(id="kimi:prod-01", provider="kimi", state=AccountState.IDLE,
-                context_limit=128_000, rate_limit_rpm=50),
+        Account(id="chatgpt:ui-01", provider="chatgpt_ui", state=AccountState.IDLE,
+                context_limit=32_768, rate_limit_rpm=20),
+        Account(id="qwen:ui-01", provider="qwen_ui", state=AccountState.IDLE,
+                context_limit=131_072, rate_limit_rpm=20),
         Account(id="local:dev-01", provider="local_llm", state=AccountState.IDLE,
                 context_limit=256_000, rate_limit_rpm=30),
+        Account(id="deepseek:ui-01", provider="deepseek_ui", state=AccountState.IDLE,
+                context_limit=1_048_576, rate_limit_rpm=20),
+        Account(id="zai:ui-01", provider="z_ai_ui", state=AccountState.IDLE,
+                context_limit=131_072, rate_limit_rpm=20),
+        Account(id="xiaomimimo:ui-01", provider="xiaomimimo_ui", state=AccountState.IDLE,
+                context_limit=131_072, rate_limit_rpm=20),
+        Account(id="minimax:ui-01", provider="minimax_ui", state=AccountState.IDLE,
+                context_limit=131_072, rate_limit_rpm=20),
+        Account(id="kimi:ui-01", provider="kimi_ui", state=AccountState.IDLE,
+                context_limit=128_000, rate_limit_rpm=20),
     ]
     lease_manager.register_accounts(default_accounts)
-    app.state.start_time = datetime.now(timezone.utc)
+    app.state.start_time = datetime.now(UTC)
 
 
 # ── System resources helper ──────────────────────────────────────
@@ -145,7 +256,7 @@ def _get_system_resources() -> SystemResources:
 async def health() -> HealthResponse:
     """Health check with system resource snapshot."""
     resources = _get_system_resources()
-    uptime = (datetime.now(timezone.utc) - app.state.start_time).total_seconds()
+    uptime = (datetime.now(UTC) - app.state.start_time).total_seconds()
     wl = resource_scheduler.get_watermark_level(resources.available_ram_gb)
     return HealthResponse(
         status="ok" if wl < WatermarkLevel.CRITICAL else "degraded",
@@ -210,7 +321,7 @@ def _select_preferred_provider(req: SubmitTaskRequest) -> str | None:
 
 
 @app.get("/tasks", response_model=list[TaskResponse])
-async def list_tasks(status: Optional[TaskStatus] = None) -> list[TaskResponse]:
+async def list_tasks(status: TaskStatus | None = None) -> list[TaskResponse]:
     """List all tasks, optionally filtered by status."""
     tasks = _active_tasks.values()
     if status:
@@ -248,7 +359,7 @@ async def execute_task_step(task_id: str, step_name: str = "", agent_type: str =
 
 
 @app.get("/accounts", response_model=list[AccountResponse])
-async def list_accounts(provider: Optional[str] = None, state: Optional[AccountState] = None) -> list[AccountResponse]:
+async def list_accounts(provider: str | None = None, state: AccountState | None = None) -> list[AccountResponse]:
     """List registered accounts with current state."""
     accounts = lease_manager.list_accounts(provider=provider, state=state)
     return [_account_to_response(a) for a in accounts]
@@ -261,7 +372,7 @@ async def list_leases() -> list[LeaseResponse]:
 
 
 @app.post("/leases", response_model=LeaseResponse)
-async def request_lease(task_id: str, agent_id: str, provider: Optional[str] = None) -> LeaseResponse:
+async def request_lease(task_id: str, agent_id: str, provider: str | None = None) -> LeaseResponse:
     """Request a lease for an agent-task pair."""
     try:
         lease = lease_manager.request_lease(task_id=task_id, agent_id=agent_id, preferred_provider=provider)
@@ -332,6 +443,71 @@ async def list_providers() -> dict[str, Any]:
         "supports_tools": p.supports_tools,
         "capabilities": p.capabilities.model_dump(),
     } for name, p in PROVIDER_PROFILES.items()}
+
+
+# ── Chat endpoints (real LLM fan-out) ────────────────────────────
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat(req: ChatRequest) -> ChatResponse:
+    """Send *prompt* to one provider, or fan out to many in parallel.
+
+    Body fields:
+        provider:   single-provider mode (returns one result)
+        providers:  multi-provider mode (returns one result per provider)
+        parallel:   when ``providers`` is given, run them concurrently
+                    (default ``True``); ignored in single-provider mode
+        mock_mode:  return canned responses without launching a browser
+        context:    optional chat history passed to the adapter
+    """
+    t0 = asyncio.get_event_loop().time()
+
+    if req.providers:
+        provider_names = req.providers
+        do_parallel = req.parallel
+    elif req.provider:
+        provider_names = [req.provider]
+        do_parallel = False
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="specify either 'provider' or 'providers'",
+        )
+
+    adapters: list[ProviderAdapter] = []
+    for name in provider_names:
+        try:
+            adapters.append(_build_adapter(name, req.mock_mode))
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"{name}: {exc}") from exc
+
+    if do_parallel and len(adapters) > 1:
+        responses = await EngineUIAdapter.fan_out(adapters, req.prompt, req.context)
+    else:
+        responses = []
+        for adapter in adapters:
+            try:
+                responses.append(await adapter.send(req.prompt, req.context))
+            except Exception as exc:
+                responses.append(
+                    ProviderResponse(
+                        success=False,
+                        error=f"{type(exc).__name__}: {exc}",
+                        model=adapter.provider_name,
+                    )
+                )
+            finally:
+                import contextlib
+                with contextlib.suppress(Exception):
+                    await adapter.close()
+
+    results = [_to_chat_result(r, n) for r, n in zip(responses, provider_names)]
+    return ChatResponse(
+        prompt=req.prompt,
+        results=results,
+        total_latency_ms=round((asyncio.get_event_loop().time() - t0) * 1000, 1),
+    )
 
 
 # ── Workspace & runtime endpoints ────────────────────────────────

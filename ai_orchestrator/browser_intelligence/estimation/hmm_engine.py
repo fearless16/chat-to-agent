@@ -117,9 +117,9 @@ class HMMEngine:
         if not observations:
             return []
 
-        T = len(observations)
-        N = len(self._states)
-        state_idx = {s: i for i, s in enumerate(self._states)}
+        T = len(observations)  # noqa: N806
+        N = len(self._states)  # noqa: N806
+        {s: i for i, s in enumerate(self._states)}
 
         dp: list[list[float]] = [[float("-inf")] * N for _ in range(T)]
         backpointer: list[list[int]] = [[-1] * N for _ in range(T)]

@@ -24,6 +24,6 @@ class BaseSensor(ABC):
         """
         ...
 
-    def reset(self) -> None:
+    def reset(self) -> None:  # noqa: B027
         """Reset sensor state between pages/sessions."""
         pass

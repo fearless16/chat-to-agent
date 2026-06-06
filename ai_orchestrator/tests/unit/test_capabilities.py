@@ -26,8 +26,8 @@ class TestCapabilityVector:
             CapabilityVector(reasoning=1.5)
 
     def test_high_capability_provider(self):
-        """DeepSeek has highest reasoning and coding scores."""
-        ds = PROVIDER_PROFILES["deepseek_api"]
+        """DeepSeek (UI) has highest reasoning and coding scores."""
+        ds = PROVIDER_PROFILES["deepseek_ui"]
         assert ds.capabilities.reasoning >= 0.9
         assert ds.capabilities.coding >= 0.9
         assert ds.capabilities.long_context >= 0.8
@@ -37,21 +37,20 @@ class TestCapabilityVector:
         local = PROVIDER_PROFILES["local_llm"]
         assert local.capabilities.cost_efficiency == 1.0
 
-    def test_chatgpt_api_high_reliability(self):
-        """ChatGPT API has high speed and reliability."""
-        gpt = PROVIDER_PROFILES["chatgpt_api"]
-        assert gpt.capabilities.speed >= 0.8
-        assert gpt.capabilities.reliability >= 0.8
+    def test_chatgpt_ui_strong_multimodality(self):
+        """ChatGPT UI has high multimodality."""
+        gpt = PROVIDER_PROFILES["chatgpt_ui"]
+        assert gpt.capabilities.multimodality >= 0.8
 
-    def test_qwen_large_context(self):
-        """Qwen has the largest context window among API providers."""
-        qwen = PROVIDER_PROFILES["qwen_api"]
+    def test_qwen_ui_large_context(self):
+        """Qwen UI has the largest context window among non-DeepSeek providers."""
+        qwen = PROVIDER_PROFILES["qwen_ui"]
         assert qwen.context_limit >= 128_000
 
-    def test_deepseek_million_context(self):
-        """DeepSeek supports 1M context."""
-        ds = PROVIDER_PROFILES["deepseek_api"]
-        assert ds.context_limit == 1_000_000
+    def test_deepseek_ui_million_context(self):
+        """DeepSeek UI supports 1M+ context."""
+        ds = PROVIDER_PROFILES["deepseek_ui"]
+        assert ds.context_limit >= 1_000_000
 
     def test_task_requirements_defaults(self):
         """TaskRequirements has sensible defaults."""

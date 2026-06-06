@@ -12,7 +12,7 @@ from ai_orchestrator.orchestrator.provider_router import (
 
 
 def make_account(
-    provider: str = "deepseek",
+    provider: str = "deepseek_ui",
     context_limit: int = 8_192,
     health_score: float = 1.0,
     current_rate_usage: float = 0.0,
@@ -96,7 +96,7 @@ class TestScoreAccountCapabilityScoring:
 
     def test_requires_reasoning_desired(self):
         """Deepseek has reasoning=0.95; weight=0.5 => contribution=0.475."""
-        acct = make_account(provider="deepseek")
+        acct = make_account(provider="deepseek_ui")
         req = TaskRequirements(
             requires_reasoning=True,
             priority={"reasoning": 0.5, "coding": 0.0, "translation": 0.0, "multimodality": 0.0},
@@ -107,7 +107,7 @@ class TestScoreAccountCapabilityScoring:
 
     def test_requires_coding(self):
         """Deepseek has coding=0.95."""
-        acct = make_account(provider="deepseek")
+        acct = make_account(provider="deepseek_ui")
         req = TaskRequirements(
             requires_coding=True,
             priority={"reasoning": 0.0, "coding": 0.7, "translation": 0.0, "multimodality": 0.0},
@@ -117,7 +117,7 @@ class TestScoreAccountCapabilityScoring:
 
     def test_requires_translation(self):
         """Qwen has translation=0.85."""
-        acct = make_account(provider="qwen")
+        acct = make_account(provider="qwen_ui")
         req = TaskRequirements(
             requires_translation=True,
             priority={"reasoning": 0.0, "coding": 0.0, "translation": 0.6, "multimodality": 0.0},
@@ -127,7 +127,7 @@ class TestScoreAccountCapabilityScoring:
 
     def test_requires_multimodality(self):
         """ChatGPT has multimodality=0.9."""
-        acct = make_account(provider="chatgpt_api")
+        acct = make_account(provider="chatgpt_ui")
         req = TaskRequirements(
             requires_multimodality=True,
             priority={"reasoning": 0.0, "coding": 0.0, "translation": 0.0, "multimodality": 0.8},
@@ -137,7 +137,7 @@ class TestScoreAccountCapabilityScoring:
 
     def test_no_active_requirements_uses_default_weights(self):
         """When no requires_* flags are set, uses DEFAULT_WEIGHTS across all capabilities."""
-        acct = make_account(provider="deepseek")
+        acct = make_account(provider="deepseek_ui")
         req = TaskRequirements(
             requires_reasoning=False, requires_coding=False,
             requires_translation=False, requires_multimodality=False,
@@ -155,16 +155,16 @@ class TestScoreAccountHealthPenalty:
         self.router = ProviderRouter()
 
     def test_low_health_reduces_score(self):
-        acct = make_account(provider="deepseek", health_score=0.5, context_limit=131072)
+        acct = make_account(provider="deepseek_ui", health_score=0.5, context_limit=131072)
         req = TaskRequirements(requires_reasoning=True, priority={"reasoning": 1.0})
-        healthy = make_account(provider="deepseek", health_score=1.0, context_limit=131072)
+        healthy = make_account(provider="deepseek_ui", health_score=1.0, context_limit=131072)
         result_healthy = self.router.score_account(healthy, req)
         result = self.router.score_account(acct, req)
         # With health_score=0.5, penalty = (1-0.5)*2.0 = 1.0
         assert result.score < result_healthy.score
 
     def test_zero_health_max_penalty(self):
-        acct = make_account(provider="deepseek", health_score=0.0)
+        acct = make_account(provider="deepseek_ui", health_score=0.0)
         req = TaskRequirements(requires_reasoning=True, priority={"reasoning": 1.0})
         result = self.router.score_account(acct, req)
         # Health penalty = (1.0-0.0)*2.0 = 2.0
@@ -180,7 +180,7 @@ class TestScoreAccountRatePenalty:
         self.router = ProviderRouter()
 
     def test_high_rate_usage_reduces_score(self):
-        acct = make_account(provider="deepseek", current_rate_usage=0.8)
+        acct = make_account(provider="deepseek_ui", current_rate_usage=0.8)
         req = TaskRequirements(requires_reasoning=True, priority={"reasoning": 1.0})
         result = self.router.score_account(acct, req)
         # Rate penalty = 0.8 * 1.5 = 1.2
@@ -189,7 +189,7 @@ class TestScoreAccountRatePenalty:
         assert result.score == 0.0
 
     def test_zero_rate_usage_no_penalty(self):
-        acct = make_account(provider="deepseek", current_rate_usage=0.0)
+        acct = make_account(provider="deepseek_ui", current_rate_usage=0.0)
         req = TaskRequirements(requires_reasoning=True, priority={"reasoning": 1.0})
         result = self.router.score_account(acct, req)
         assert result.score == pytest.approx(0.95, abs=0.01)
@@ -202,7 +202,7 @@ class TestScoreAccountLatencyPenalty:
         self.router = ProviderRouter()
 
     def test_high_latency_reduces_score(self):
-        acct = make_account(provider="deepseek", avg_latency_ms=2000.0)
+        acct = make_account(provider="deepseek_ui", avg_latency_ms=2000.0)
         req = TaskRequirements(requires_reasoning=True, priority={"reasoning": 1.0})
         result = self.router.score_account(acct, req)
         # Latency penalty = min(2000/1000, 5) * 1.0 = 2.0
@@ -211,7 +211,7 @@ class TestScoreAccountLatencyPenalty:
         assert result.score == 0.0
 
     def test_low_latency_minimal_penalty(self):
-        acct = make_account(provider="deepseek", avg_latency_ms=50.0)
+        acct = make_account(provider="deepseek_ui", avg_latency_ms=50.0)
         req = TaskRequirements(requires_reasoning=True, priority={"reasoning": 1.0})
         result = self.router.score_account(acct, req)
         # Latency penalty = min(50/1000, 5) * 1.0 = 0.05
@@ -227,7 +227,7 @@ class TestScoreAccountFailuresPenalty:
         self.router = ProviderRouter()
 
     def test_failures_reduce_score(self):
-        acct = make_account(provider="deepseek", consecutive_failures=3)
+        acct = make_account(provider="deepseek_ui", consecutive_failures=3)
         req = TaskRequirements(requires_reasoning=True, priority={"reasoning": 1.0})
         result = self.router.score_account(acct, req)
         # Failures penalty = 3 * 0.5 = 1.5
@@ -236,7 +236,7 @@ class TestScoreAccountFailuresPenalty:
         assert result.score == 0.0
 
     def test_no_failures_no_penalty(self):
-        acct = make_account(provider="deepseek", consecutive_failures=0)
+        acct = make_account(provider="deepseek_ui", consecutive_failures=0)
         req = TaskRequirements(requires_reasoning=True, priority={"reasoning": 1.0})
         result = self.router.score_account(acct, req)
         assert result.score == pytest.approx(0.95, abs=0.01)
@@ -266,8 +266,8 @@ class TestRankAccounts:
         assert self.router.rank_accounts([], TaskRequirements()) == []
 
     def test_returns_sorted_descending(self):
-        acct_a = make_account(provider="deepseek", health_score=1.0)
-        acct_b = make_account(provider="deepseek", health_score=0.3)
+        acct_a = make_account(provider="deepseek_ui", health_score=1.0)
+        acct_b = make_account(provider="deepseek_ui", health_score=0.3)
         req = TaskRequirements(requires_reasoning=True, priority={"reasoning": 1.0})
         ranked = self.router.rank_accounts([acct_a, acct_b], req)
         assert len(ranked) == 2
@@ -275,7 +275,7 @@ class TestRankAccounts:
         assert ranked[0].account is acct_a
 
     def test_scored_accounts_have_reason(self):
-        acct = make_account(provider="deepseek")
+        acct = make_account(provider="deepseek_ui")
         req = TaskRequirements()
         ranked = self.router.rank_accounts([acct], req)
         assert len(ranked) == 1
@@ -292,14 +292,14 @@ class TestSelectAccount:
         assert self.router.select_account([], TaskRequirements()) is None
 
     def test_returns_best_account(self):
-        acct_a = make_account(provider="deepseek", health_score=0.4)
-        acct_b = make_account(provider="deepseek", health_score=1.0)
+        acct_a = make_account(provider="deepseek_ui", health_score=0.4)
+        acct_b = make_account(provider="deepseek_ui", health_score=1.0)
         req = TaskRequirements(requires_reasoning=True, priority={"reasoning": 1.0})
         selected = self.router.select_account([acct_a, acct_b], req)
         assert selected is acct_b
 
     def test_returns_only_account(self):
-        acct = make_account(provider="deepseek")
+        acct = make_account(provider="deepseek_ui")
         selected = self.router.select_account([acct], TaskRequirements())
         assert selected is acct
 
@@ -316,27 +316,27 @@ class TestSelectProvider:
 
     def test_selects_best_provider(self):
         pool = {
-            "deepseek": [
-                make_account(provider="deepseek", health_score=1.0),
+            "deepseek_ui": [
+                make_account(provider="deepseek_ui", health_score=1.0),
             ],
-            "chatgpt": [
-                make_account(provider="chatgpt", health_score=0.3),
+            "chatgpt_ui": [
+                make_account(provider="chatgpt_ui", health_score=0.3),
             ],
         }
         req = TaskRequirements(requires_reasoning=True, priority={"reasoning": 1.0})
         result = self.router.select_provider(req, pool)
         assert result is not None
         provider, account = result
-        assert provider == "deepseek"
-        assert account.provider == "deepseek"
+        assert provider == "deepseek_ui"
+        assert account.provider == "deepseek_ui"
 
     def test_prefers_healthy_over_unhealthy(self):
         pool = {
             "provider_a": [
-                make_account(provider="deepseek", health_score=0.2),
+                make_account(provider="deepseek_ui", health_score=0.2),
             ],
             "provider_b": [
-                make_account(provider="qwen", health_score=0.9),
+                make_account(provider="qwen_ui", health_score=0.9),
             ],
         }
         req = TaskRequirements(requires_reasoning=True, priority={"reasoning": 1.0})
@@ -349,7 +349,7 @@ class TestSelectProvider:
 
     def test_returns_typed_tuple(self):
         pool = {
-            "deepseek": [make_account(provider="deepseek")],
+            "deepseek_ui": [make_account(provider="deepseek_ui")],
         }
         result = self.router.select_provider(TaskRequirements(), pool)
         assert isinstance(result, tuple)
@@ -363,7 +363,7 @@ class TestCustomWeights:
 
     def test_custom_health_penalty(self):
         router = ProviderRouter(weights={"health_penalty": 5.0})
-        acct = make_account(provider="deepseek", health_score=0.8)
+        acct = make_account(provider="deepseek_ui", health_score=0.8)
         req = TaskRequirements(requires_reasoning=True, priority={"reasoning": 1.0})
         result = router.score_account(acct, req)
         # Health penalty = (1-0.8)*5.0 = 1.0

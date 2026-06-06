@@ -22,11 +22,11 @@ def reset_state():
         pass
     if len(lease_manager.list_accounts()) < 6:
         defaults = [
-            Account(id="openai:prod-01", provider="chatgpt_api", state=AccountState.IDLE, context_limit=32768, rate_limit_rpm=60),
-            Account(id="openai:prod-02", provider="chatgpt_api", state=AccountState.IDLE, context_limit=32768, rate_limit_rpm=60),
-            Account(id="qwen:prod-01", provider="qwen", state=AccountState.IDLE, context_limit=131072, rate_limit_rpm=100),
-            Account(id="deepseek:prod-01", provider="deepseek", state=AccountState.IDLE, context_limit=1000000, rate_limit_rpm=120),
-            Account(id="kimi:prod-01", provider="kimi", state=AccountState.IDLE, context_limit=128000, rate_limit_rpm=50),
+            Account(id="chatgpt:ui-01", provider="chatgpt_ui", state=AccountState.IDLE, context_limit=32768, rate_limit_rpm=20),
+            Account(id="qwen:ui-01", provider="qwen_ui", state=AccountState.IDLE, context_limit=131072, rate_limit_rpm=20),
+            Account(id="deepseek:ui-01", provider="deepseek_ui", state=AccountState.IDLE, context_limit=1048576, rate_limit_rpm=20),
+            Account(id="kimi:ui-01", provider="kimi_ui", state=AccountState.IDLE, context_limit=128000, rate_limit_rpm=20),
+            Account(id="zai:ui-01", provider="z_ai_ui", state=AccountState.IDLE, context_limit=131072, rate_limit_rpm=20),
             Account(id="local:dev-01", provider="local_llm", state=AccountState.IDLE, context_limit=256000, rate_limit_rpm=30),
         ]
         lease_manager.register_accounts(defaults)
@@ -117,13 +117,13 @@ class TestAccountEndpoint:
         data = resp.json()
         assert len(data) >= 6
         providers = {a["provider"] for a in data}
-        assert "deepseek" in providers
+        assert "deepseek_ui" in providers
 
     async def test_filter_accounts_by_provider(self, client):
-        resp = await client.get("/accounts?provider=deepseek")
+        resp = await client.get("/accounts?provider=deepseek_ui")
         assert resp.status_code == 200
         for a in resp.json():
-            assert a["provider"] == "deepseek"
+            assert a["provider"] == "deepseek_ui"
 
 
 class TestLeaseEndpoints:
@@ -146,8 +146,8 @@ class TestProviderEndpoint:
         resp = await client.get("/providers")
         assert resp.status_code == 200
         data = resp.json()
-        assert "deepseek_api" in data
-        assert data["deepseek_api"]["context_limit"] == 1_000_000
+        assert "deepseek_ui" in data
+        assert data["deepseek_ui"]["context_limit"] == 1_048_576
 
 
 class TestMetricsEndpoint:
