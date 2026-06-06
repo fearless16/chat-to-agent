@@ -7,6 +7,11 @@ Pipeline (ordered by cost, lowest first):
 3. DOM Snippets           — targeted extraction (candidate buttons/inputs)
 4. DeepSeek DOM Analysis  — expensive, only when a11y + DOM fail
 5. Vision                 — last resort, screenshot + coord recovery
+
+Response Extraction Pipeline:
+
+1. A11y Tree → DeepSeek   — semantic extraction, no CSS selector dependency
+2. Raw DOM fallback       — if LLM unavailable, parse inner_text
 """
 
 from __future__ import annotations
@@ -20,6 +25,14 @@ from ai_orchestrator.browser.selector_cache import SelectorCache
 from ai_orchestrator.browser.schema import UIRole, UISelector, UISchema, UISchemaEngine
 
 log = logging.getLogger(__name__)
+
+EXTRACTION_PROMPT = (
+    "You are a DOM content extractor. Below is the accessibility tree of a chat page.\n"
+    "Extract ONLY the assistant's latest response message. Return JUST the message text.\n"
+    "Ignore placeholder text, thinking prefixes, streaming indicators.\n"
+    "If no assistant response is found, return empty string.\n\n"
+    "ACCESSIBILITY TREE:\n{tree_text}"
+)
 
 
 @dataclass
@@ -45,10 +58,12 @@ class UIIntelligence:
         self,
         selector_cache: Optional[SelectorCache] = None,
         schema_engine: Optional[UISchemaEngine] = None,
+        deepseek_adapter=None,
     ) -> None:
         self._cache = selector_cache or SelectorCache()
         self._a11y = AccessibilityRuntime()
         self._schema = schema_engine or UISchemaEngine()
+        self._deepseek = deepseek_adapter
         self._provider_known_selectors: dict[str, dict[str, list[str]]] = {
             "qwen_ui": {
                 UIRole.INPUT: [
@@ -231,6 +246,115 @@ class UIIntelligence:
         and recover coordinates.
         """
         return None
+
+    # ── response extraction (LLM tier) ──────────────────────────────
+
+    async def extract_response(self, page, provider: str = "") -> Optional[str]:
+        """Extract the assistant's response from the page using the LLM pipeline.
+
+        Tries DeepSeek a11y analysis first, falls back to raw HTML extraction.
+        Returns ``None`` if nothing found.
+        """
+        t0 = __import__("time").monotonic()
+
+        if self._deepseek is not None:
+            try:
+                result = await self._extract_via_llm(page)
+                if result:
+                    log.info(
+                        "LLM extraction OK — %d chars in %.0fms",
+                        len(result),
+                        (__import__("time").monotonic() - t0) * 1000,
+                    )
+                    return result
+            except Exception:
+                log.debug("LLM extraction failed, falling back to raw DOM", exc_info=True)
+
+        return await self._extract_via_dom(page, provider)
+
+    async def _extract_via_llm(self, page) -> Optional[str]:
+        tree_text = await self._a11y_tree_to_text(page)
+        if not tree_text:
+            log.debug("Empty a11y tree — cannot extract via LLM")
+            return None
+
+        prompt = EXTRACTION_PROMPT.format(tree_text=tree_text[:16000])
+
+        resp = await self._deepseek.send(prompt)
+        if not resp.success or not resp.content:
+            log.warning("DeepSeek extraction returned empty/failed: %s", resp.error)
+            return None
+
+        content = resp.content.strip()
+        no_response_markers = (
+            "", "none", "null", "empty",
+            "no assistant response",
+            "does not contain",
+            "no response found",
+            "no messages",
+        )
+        content_lower = content.lower()
+        if any(content_lower == m or content_lower.startswith(m + " ")
+               for m in ("", "none", "null", "empty")):
+            return None
+        if any(m in content_lower for m in no_response_markers):
+            return None
+        return content
+
+    async def _extract_via_dom(self, page, provider: str = "") -> Optional[str]:
+        """Raw DOM fallback — try known selectors for message containers."""
+        known = self._provider_known_selectors.get(provider, {}).get(
+            UIRole.ASSISTANT_MESSAGE, []
+        )
+        if not known:
+            known = ['[class*="message"]', 'article', '[class*="assistant"]']
+
+        import asyncio
+
+        for sel in known:
+            try:
+                items = page.locator(sel)
+                count = await items.count()
+                if count > 0:
+                    text = (await items.last.inner_text()).strip()
+                    if text and len(text) > 20:
+                        placeholder_prefixes = (
+                            "Engaging deeply", "Reasoning", "Thinking",
+                            "Let me", "Searching", "Retrieving", "Analyzing",
+                        )
+                        if not any(text.startswith(p) for p in placeholder_prefixes):
+                            return text
+            except Exception:
+                continue
+        return None
+
+    async def _a11y_tree_to_text(self, page) -> str:
+        """Convert the page's a11y tree to a readable text representation."""
+        snap = await self._a11y.snapshot(page)
+        if snap.root is None:
+            return ""
+
+        lines: list[str] = []
+
+        def _walk(node: A11yNode, depth: int = 0) -> None:
+            indent = "  " * depth
+            parts = [f"{indent}[{node.role}]"]
+            if node.name:
+                parts.append(f" name={node.name!r}")
+            if node.value:
+                parts.append(f" value={node.value!r}")
+            if node.description:
+                parts.append(f" desc={node.description!r}")
+            if node.focused:
+                parts.append(" FOCUSED")
+            if node.disabled:
+                parts.append(" DISABLED")
+            lines.append("".join(parts))
+            for child in node.children:
+                _walk(child, depth + 1)
+
+        _walk(snap.root)
+        return "\n".join(lines)
 
     # ── helpers ─────────────────────────────────────────────────────
 

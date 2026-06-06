@@ -92,9 +92,14 @@ class QwenAPIAdapter(ProviderAdapter):
             )
             data = resp.json()
             if resp.status_code >= 400:
+                err = data.get("error", {})
+                if isinstance(err, dict):
+                    msg = err.get("message", resp.text)
+                else:
+                    msg = data.get("message", resp.text)
                 return ProviderResponse(
                     success=False,
-                    error=data.get("message", resp.text),
+                    error=msg,
                     latency_ms=(time.monotonic() - t0) * 1000,
                 )
             return ProviderResponse(

@@ -71,12 +71,11 @@ class AccessibilityRuntime:
     """
 
     async def snapshot(self, page) -> A11ySnapshot:
-        """Capture and parse the page's accessibility tree."""
-        raw = await page.accessibility.snapshot()
+        raw = await page.aria_snapshot()
         if raw is None:
             return A11ySnapshot()
 
-        root = self._parse_node(raw)
+        root = self._parse_aria_yaml(raw)
         flat: list[A11yNode] = []
         self._flatten(root, flat)
         return A11ySnapshot(root=root, _flat=flat)
@@ -143,17 +142,84 @@ class AccessibilityRuntime:
 
     # ── internal ────────────────────────────────────────────────────
 
-    def _parse_node(self, raw: dict[str, Any]) -> A11yNode:
-        return A11yNode(
-            role=raw.get("role", ""),
-            name=raw.get("name", ""),
-            value=raw.get("value"),
-            description=raw.get("description"),
-            focused=raw.get("focused", False),
-            disabled=raw.get("disabled", False),
-            checked=raw.get("checked"),
-            children=[self._parse_node(c) for c in raw.get("children", [])],
+    def _parse_node(self, raw: dict | str) -> A11yNode:
+        """Parse a dict-based accessibility snapshot into an A11yNode tree.
+
+        Handles both Playwright's ``page.accessibility.snapshot()`` dict
+        format and the string-based aria snapshot format.
+        """
+        if isinstance(raw, str):
+            return self._parse_aria_yaml(raw)
+        return self._parse_dict_node(raw)
+
+    def _parse_dict_node(self, data: dict) -> A11yNode:
+        node = A11yNode(
+            role=data.get("role", "unknown"),
+            name=data.get("name", ""),
+            value=data.get("value"),
+            description=data.get("description"),
+            focused=data.get("focused", False),
+            disabled=data.get("disabled", False),
+            checked=data.get("checked"),
         )
+        for child_data in data.get("children", []):
+            node.children.append(self._parse_dict_node(child_data))
+        return node
+
+    def _parse_aria_yaml(self, text: str) -> A11yNode:
+        lines = text.splitlines()
+        root = A11yNode(role="WebArea", name="")
+        stack: list[tuple[int, A11yNode]] = [(-1, root)]
+
+        for line in lines:
+            if not line.strip():
+                continue
+            indent = len(line) - len(line.lstrip())
+            content = line.lstrip()
+
+            content = content.removeprefix("- ")
+            role = content.split(" ")[0].split(":")[0] if content else ""
+            name = ""
+            value = None
+            description = ""
+
+            remainder = content[len(role):].strip()
+
+            if remainder.endswith(":"):
+                pass
+            elif ":" in remainder:
+                colon_idx = remainder.index(":")
+                value = remainder[colon_idx + 1:].strip().strip('"')
+                remainder = remainder[:colon_idx].strip()
+
+            while remainder:
+                if remainder.startswith('"'):
+                    quote_end = remainder.index('"', 1)
+                    name = remainder[1:quote_end]
+                    remainder = remainder[quote_end + 1:].strip()
+                elif remainder.startswith("["):
+                    bracket_end = remainder.index("]")
+                    description = remainder[1:bracket_end]
+                    remainder = remainder[bracket_end + 1:].strip()
+                else:
+                    break
+
+            node = A11yNode(
+                role=role,
+                name=name or value or "",
+                value=value if value else None,
+                description=description or None,
+            )
+
+            while stack and stack[-1][0] >= indent:
+                stack.pop()
+
+            stack[-1][1].children.append(node)
+
+            if content.rstrip().endswith(":"):
+                stack.append((indent, node))
+
+        return root
 
     def _flatten(self, node: A11yNode, acc: list[A11yNode]) -> None:
         acc.append(node)
