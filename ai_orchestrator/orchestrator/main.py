@@ -176,17 +176,14 @@ def _load_auth_for(provider: str) -> dict | None:
 
 # Map of provider → persistent browser profile directory on disk.
 _PERSISTENT_PROFILE_MAP: dict[str, str] = {
-    "chatgpt_ui": "chatgpt_browser_profile",
     "qwen_ui": "qwen_browser_profile",
 }
 
 
 # Map of provider → browser channel to use.
 # Chromium is required for CDP support (HMM engine, SSE capture, traffic classifier).
-# Firefox is only used where Cloudflare blocks Chromium automation (e.g. ChatGPT).
 _PROVIDER_CHANNEL_MAP: dict[str, str] = {
-    "chatgpt_ui": "firefox",    # Cloudflare blocks Chromium automation
-    # All others default to "chromium" for full CDP support.
+    # All providers default to "chromium" for full CDP support.
 }
 
 
@@ -201,8 +198,7 @@ def _build_adapter(
         full login session state including localStorage, IndexedDB, etc.)
       - Falls back to storage_state (cookies) when no profile directory exists
       - Runs ``headless=False`` so chat UIs don't detect and block automation
-      - Uses Chromium by default for CDP support; Firefox only for ChatGPT
-        (Cloudflare evasion)
+       - Uses Chromium by default for CDP support
     """
     cls = _PROVIDER_CLASS_MAP.get(provider)
     if cls is None:
