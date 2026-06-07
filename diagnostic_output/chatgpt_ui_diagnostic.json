@@ -1,8 +1,0 @@
-{
-  "provider": "chatgpt_ui",
-  "channel": "firefox",
-  "steps": [],
-  "error": "CloudflareBlockError: chatgpt_ui: Cloudflare challenge detected \u2014 Cloudflare challenge elements detected in DOM. Do NOT retry. Detect \u2192 Pause \u2192 Notify.",
-  "traceback": "Traceback (most recent call last):\n  File \"<string>\", line 60, in diagnose\n    page = await adapter._get_page()\n           ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/prajwalbairagi/projects/chat-to-agent/ai_orchestrator/adapters/engine_adapter.py\", line 1302, in _get_page\n    raise CloudflareBlockError(\n    ...<4 lines>...\n    )\nai_orchestrator.adapters.errors.CloudflareBlockError: chatgpt_ui: Cloudflare challenge detected \u2014 Cloudflare challenge elements detected in DOM. Do NOT retry. Detect \u2192 Pause \u2192 Notify.\n",
-  "elapsed_ms": 7277.551624982152
-}

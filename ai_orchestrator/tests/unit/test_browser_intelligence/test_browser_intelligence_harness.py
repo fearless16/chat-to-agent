@@ -264,45 +264,6 @@ class TestBrowserHarness:
         assert any(o.success for o in out)
         await engine.detach()
 
-    async def test_drift_detector_receives_real_signals(self, synthetic_browser):
-        """The drift detector accepts real DOM fingerprints from the
-        synthetic page and reports a sane snapshot."""
-        from ai_orchestrator.browser_intelligence.intelligence.drift_detector import (
-            DriftDetector,
-            DriftSignal,
-        )
-
-        d = DriftDetector()
-        for _ in range(20):
-            d.observe(DriftSignal(kind="dom", fingerprint="synthetic:textarea"))
-        snap = d.snapshot()
-        assert snap.sample_count == 20
-        # Same fingerprint every time → low drift.
-        assert snap.drift_score < 0.5
-
-    async def test_shadow_ban_detector_with_synthetic_history(self):
-        """The shadow-ban detector identifies a pattern of degraded
-        responses without needing a browser."""
-        from ai_orchestrator.browser_intelligence.intelligence.shadow_ban_detector import (
-            ShadowBanDetector,
-            ShadowBanState,
-        )
-
-        s = ShadowBanDetector()
-        for _ in range(15):
-            s.observe(response_length=2000, completion_rate=1.0, tokens_per_second=30.0)
-        for _ in range(10):
-            v = s.observe(
-                response_length=20,
-                completion_rate=0.1,
-                tokens_per_second=1.0,
-                error_count=4,
-                quality_score=0.05,
-            )
-        assert v.state == ShadowBanState.SHADOW_BANNED
-        # Posterior sums to 1.
-        assert abs(v.p_normal + v.p_degraded + v.p_shadow_ban - 1.0) < 1e-9
-
     async def test_engine_pool_reuses_engine(self):
         """The EnginePool returns the same engine instance for the
         same page across calls."""

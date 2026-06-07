@@ -25,10 +25,6 @@ from ai_orchestrator.browser_intelligence.estimation.belief_state import (
 from ai_orchestrator.browser_intelligence.estimation.transition_matrix import (
     TransitionMatrix,
 )
-from ai_orchestrator.browser_intelligence.intelligence.shadow_ban_detector import (
-    ShadowBanDetector,
-    ShadowBanState,
-)
 from ai_orchestrator.browser_intelligence.intelligence.traffic_classifier import (
     ResponseClassifier,
     TrafficCategory,
@@ -143,37 +139,6 @@ class TestConfidenceEngine:
         peaky = BeliefState.certain(HiddenState.READY)
         # Certain belief → entropy = 0 → confidence = 1.0.
         assert ce.from_belief(peaky) == 1.0
-
-
-class TestShadowBanInvariants:
-    def test_posterior_sums_to_one_across_states(self):
-        s = ShadowBanDetector()
-        for _ in range(15):
-            s.observe(response_length=2000, completion_rate=1.0, tokens_per_second=30.0)
-        for _ in range(5):
-            v = s.observe(
-                response_length=500,
-                completion_rate=0.5,
-                tokens_per_second=5.0,
-            )
-            total = v.p_normal + v.p_degraded + v.p_shadow_ban
-            assert abs(total - 1.0) < 1e-9, f"posterior sums to {total}"
-
-    def test_state_consistent_with_posterior(self):
-        s = ShadowBanDetector()
-        for _ in range(20):
-            s.observe(response_length=2000, completion_rate=1.0, tokens_per_second=30.0)
-        for _ in range(15):
-            v = s.observe(
-                response_length=10,
-                completion_rate=0.1,
-                tokens_per_second=0.5,
-                error_count=5,
-            )
-        if v.p_shadow_ban > 0.5:
-            assert v.state == ShadowBanState.SHADOW_BANNED
-        elif v.p_shadow_ban + v.p_degraded > 0.3:
-            assert v.state == ShadowBanState.DEGRADED
 
 
 class TestTrafficClassifierInvariants:

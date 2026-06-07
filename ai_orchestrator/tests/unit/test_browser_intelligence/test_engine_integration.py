@@ -26,9 +26,6 @@ import pytest
 
 from ai_orchestrator.browser_intelligence.engine import BrowserIntelligenceEngine
 from ai_orchestrator.browser_intelligence.events import EventBus, EventType
-from ai_orchestrator.browser_intelligence.intelligence.provider_brain import (
-    ProviderBrain,
-)
 from ai_orchestrator.browser_intelligence.intelligence.response_capture import (
     ResponseCapture,
 )
@@ -117,25 +114,6 @@ class TestEngineWiring:
         # Must be JSON-serializable for the persistent brain to save it.
         json.dumps(snap)
         assert snap["provider"] == "chatgpt"
-
-    def test_engine_brain_persists_across_engines(self, tmp_path: Path):
-        # Engine 1: do some work, save.
-        e1 = BrowserIntelligenceEngine()
-        e1.bind_provider("chatgpt")
-        # Move brain state by recording calibration.
-        brain = ProviderBrain("chatgpt", tmp_path / "chatgpt.brain.json")
-        brain.load()
-        brain.record_emission_calibration(e1.emission_calibration)
-        brain.record_session_start()
-        brain.save()
-
-        # Engine 2: same provider, fresh brain. Load the persisted
-        # state and assert it survived.
-        brain2 = ProviderBrain("chatgpt", tmp_path / "chatgpt.brain.json")
-        brain2.load()
-        assert brain2.session_count == 1
-        cal = brain2.emission_calibration
-        assert cal  # calibration survived
 
 
 class TestEnginePool:

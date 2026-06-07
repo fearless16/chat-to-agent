@@ -85,7 +85,13 @@ poetry.lock
 # Repo-specific
 .out/
 .deepsource/
+.benchmarks/
+.ruff_cache/
 chatgpt_session.json
-chatgpt_auth.json
-qwen_auth.json
+*_auth.json
+*_cookies.txt
 *_browser_profile/
+diagnostic_output/
+diagnostic_screenshots/
+*.png
+debug_*.txt
