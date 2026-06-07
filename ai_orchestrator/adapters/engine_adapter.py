@@ -1277,6 +1277,8 @@ class EngineUIAdapter(ProviderAdapter):
                     if self._context.pages
                     else await self._context.new_page()
                 )
+                if self._storage_state is not None:
+                    await self._context.add_cookies(self._storage_state.get("cookies", []))
             else:
                 self._browser = await self._playwright.firefox.launch(
                     headless=self.headless,
@@ -1389,6 +1391,8 @@ class EngineUIAdapter(ProviderAdapter):
                         if self._context.pages
                         else await self._context.new_page()
                     )
+                    if self._storage_state is not None:
+                        await self._context.add_cookies(self._storage_state.get("cookies", []))
                 else:
                     browser = await self._playwright.chromium.launch(
                         headless=self.headless,
@@ -1417,7 +1421,7 @@ class EngineUIAdapter(ProviderAdapter):
         await self._page.goto(
             self._site.url,
             timeout=self._timeout_ms,
-            wait_until="load",
+            wait_until="domcontentloaded",
         )
 
         # Give SPAs time to hydrate and render the chat input

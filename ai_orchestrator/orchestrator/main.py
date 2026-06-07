@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -161,39 +160,17 @@ _PROVIDER_CLASS_MAP: dict[str, type[ProviderAdapter]] = {
 
 
 def _load_auth_for(provider: str) -> dict | None:
-    """Resolve a Playwright storage_state dict for *provider*.
-
-    Tries multiple naming conventions for cookie files on disk:
-      1. ``profiles/<provider>_cookies.txt``     (e.g. chatgpt_ui_cookies.txt)
-      2. ``profiles/<base>_cookies.txt``         (e.g. kimi_cookies.txt for kimi_ui)
-      3. ``<provider>_auth.json``                (Playwright storage_state export)
-      4. ``<base>_auth.json``                    (e.g. chatgpt_auth.json)
-    """
-    # Derive base name by stripping trailing "_ui"
-    base = provider.removesuffix("_ui") if provider.endswith("_ui") else provider
-
-    # Try cookie files in order of specificity
-    cookie_candidates = [
-        Path(f"profiles/{provider}_cookies.txt"),
-        Path(f"profiles/{base}_cookies.txt"),
-    ]
-    for cookie_path in cookie_candidates:
-        if cookie_path.exists():
-            from ai_orchestrator.adapters.cookie_to_storage_state import (
-                netscape_cookies_to_storage_state,
-            )
-            return netscape_cookies_to_storage_state(cookie_path)
-
-    # Try Playwright storage_state JSON files
-    auth_candidates = [
-        Path(f"{provider}_auth.json"),
-        Path(f"{base}_auth.json"),
-    ]
-    for auth_path in auth_candidates:
-        if auth_path.exists():
-            with auth_path.open() as fh:
-                return json.load(fh)
-
+    cookie_path = Path(f"profiles/{provider}_cookies.txt")
+    if cookie_path.exists():
+        from ai_orchestrator.adapters.cookie_to_storage_state import (
+            netscape_cookies_to_storage_state,
+        )
+        return netscape_cookies_to_storage_state(cookie_path)
+    auth_path = Path(f"profiles/{provider}_auth.json")
+    if auth_path.exists():
+        import json
+        with auth_path.open() as fh:
+            return json.load(fh)
     return None
 
 
@@ -243,8 +220,7 @@ def _build_adapter(
         profile_dir = _PERSISTENT_PROFILE_MAP.get(provider)
         if profile_dir and Path(profile_dir).exists():
             persistent_profile = profile_dir
-        else:
-            storage_state = _load_auth_for(provider)
+        storage_state = _load_auth_for(provider)
 
     channel = _PROVIDER_CHANNEL_MAP.get(provider, "chromium")
 

@@ -42,12 +42,11 @@ def netscape_cookies_to_storage_state(
         if len(parts) < 7:
             continue
 
-        domain, _flag, cookie_path, secure_str, expiry_str, name, value = parts[:7]
+        domain, flag, cookie_path, secure_str, expiry_str, name, value = parts[:7]
 
         if value.startswith('"') and value.endswith('"'):
             value = value[1:-1]
 
-        domain = domain.lstrip(".")
         secure = secure_str.upper() == "TRUE"
 
         expires = -1.0
