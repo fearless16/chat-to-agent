@@ -90,11 +90,8 @@ async def save_cookies_from_context(
         cookie_dir = Path(cookie_dir)
         cookie_dir.mkdir(parents=True, exist_ok=True)
 
-        # Derive base name: kimi_ui → kimi, qwen_ui → qwen
-        base = provider.removesuffix("_ui") if provider.endswith("_ui") else provider
-
-        # Save Netscape format
-        netscape_path = cookie_dir / f"{base}_cookies.txt"
+        # Save Netscape format (must match _load_auth_for naming: {provider}_cookies.txt)
+        netscape_path = cookie_dir / f"{provider}_cookies.txt"
         netscape_text = _cookies_to_netscape(cookies)
         netscape_path.write_text(netscape_text)
         log.info(
@@ -103,7 +100,7 @@ async def save_cookies_from_context(
         )
 
         # Save Playwright storage_state JSON
-        auth_path = cookie_dir / f"{base}_auth.json"
+        auth_path = cookie_dir / f"{provider}_auth.json"
         storage = _cookies_to_storage_state(cookies)
         auth_path.write_text(json.dumps(storage, indent=2))
 

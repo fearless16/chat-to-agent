@@ -48,7 +48,7 @@ class TestCookieToStorageState:
             cookie = state["cookies"][0]
             assert cookie["name"] == "session"
             assert cookie["value"] == "test-token"
-            assert cookie["domain"] == "example.com"
+            assert cookie["domain"] == ".example.com"
             assert cookie["path"] == "/"
             assert cookie["secure"] is True
             assert cookie["httpOnly"] is False
@@ -119,45 +119,45 @@ class TestCookieToStorageState:
 
     def test_real_deepseek_cookies(self):
         profile_dir = Path(__file__).parent.parent.parent.parent / "profiles"
-        cookie_file = profile_dir / "deepseek_cookies.txt"
+        cookie_file = profile_dir / "deepseek_ui_cookies.txt"
         if not cookie_file.exists():
-            pytest.skip("deepseek_cookies.txt not found")
+            pytest.skip("deepseek_ui_cookies.txt not found")
         state = netscape_cookies_to_storage_state(cookie_file)
         names = {c["name"] for c in state["cookies"]}
         assert "ds_session_id" in names
-        assert all(c["domain"] in ("chat.deepseek.com", "deepseek.com") for c in state["cookies"])
+        assert all(c["domain"] in ("chat.deepseek.com", ".deepseek.com") for c in state["cookies"])
 
     def test_real_zai_cookies(self):
-        cookie_file = self._profile_dir() / "zai_cookies.txt"
+        cookie_file = self._profile_dir() / "z_ai_ui_cookies.txt"
         if not cookie_file.exists():
-            pytest.skip("zai_cookies.txt not found")
+            pytest.skip("z_ai_ui_cookies.txt not found")
         state = netscape_cookies_to_storage_state(cookie_file)
         names = {c["name"] for c in state["cookies"]}
         assert "token" in names
         assert "oauth_id_token" in names
 
     def test_real_xiaomimimo_cookies(self):
-        cookie_file = self._profile_dir() / "xiaomimimo_cookies.txt"
+        cookie_file = self._profile_dir() / "xiaomimimo_ui_cookies.txt"
         if not cookie_file.exists():
-            pytest.skip("xiaomimimo_cookies.txt not found")
+            pytest.skip("xiaomimimo_ui_cookies.txt not found")
         state = netscape_cookies_to_storage_state(cookie_file)
         names = {c["name"] for c in state["cookies"]}
         assert "serviceToken" in names
         assert "userId" in names
 
     def test_real_minimax_cookies(self):
-        cookie_file = self._profile_dir() / "minimax_cookies.txt"
+        cookie_file = self._profile_dir() / "minimax_ui_cookies.txt"
         if not cookie_file.exists():
-            pytest.skip("minimax_cookies.txt not found")
+            pytest.skip("minimax_ui_cookies.txt not found")
         state = netscape_cookies_to_storage_state(cookie_file)
         names = {c["name"] for c in state["cookies"]}
         assert "_token" in names
-        assert "minimax_group_id_v2" in names
+        assert "sensorsdata2015jssdkcross" in names
 
     def test_real_kimi_cookies(self):
-        cookie_file = self._profile_dir() / "kimi_cookies.txt"
+        cookie_file = self._profile_dir() / "kimi_ui_cookies.txt"
         if not cookie_file.exists():
-            pytest.skip("kimi_cookies.txt not found")
+            pytest.skip("kimi_ui_cookies.txt not found")
         state = netscape_cookies_to_storage_state(cookie_file)
         names = {c["name"] for c in state["cookies"]}
         assert "kimi-auth" in names

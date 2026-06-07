@@ -213,14 +213,18 @@ def _build_adapter(
     if cls is LocalLLMAdapter:
         return cls(mock_mode=mock_mode)
 
-    # In real mode, prefer persistent profile → then cookies
+    # In real mode, prefer persistent profile → then cookies.
+    # When a persistent browser profile exists, it contains live cookies
+    # from the user's actual browser session.  Do NOT overwrite those
+    # with (potentially stale) cookie-file cookies.
     persistent_profile = None
     storage_state = None
     if not mock_mode:
         profile_dir = _PERSISTENT_PROFILE_MAP.get(provider)
         if profile_dir and Path(profile_dir).exists():
             persistent_profile = profile_dir
-        storage_state = _load_auth_for(provider)
+        else:
+            storage_state = _load_auth_for(provider)
 
     channel = _PROVIDER_CHANNEL_MAP.get(provider, "chromium")
 
