@@ -21,7 +21,7 @@ class LocalLLMAdapter(ProviderAdapter):
 
     def __init__(
         self,
-        model: str = "qwen3.5",
+        model: str = "qwen2.5-coder:3b",
         endpoint: str = "http://localhost:11434",
         mock_mode: bool = True,
     ) -> None:

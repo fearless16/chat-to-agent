@@ -1,965 +1,625 @@
-# MULTI-PROVIDER AGENTIC PLATFORM — V6 (PRODUCTION ARCHITECTURE)
 
-> Philosophy:
->
-> Deterministic First
-> → AI Second
-> → Vision Last
+# ARCHITECTURE
 
-The system should never invoke an LLM when deterministic systems can solve the problem.
+## Layer 0 - Account/Auth
 
-The system should never invoke Vision when DOM, Accessibility, or structured UI information is available.
-
----
-
-# CORE PRINCIPLES
-
-## Principle 1
-
-Providers are replaceable.
+### Current Decision
 
 ```text
-ChatGPT
-Qwen
-DeepSeek
-Kimi
-Future Providers
+Cookies Only
 ```
 
-All providers are workers.
+Abhi Chrome profile migration/CDP attach pe time waste nahi karna.
 
-The system must never depend on any specific provider.
+Jo chal raha hai usko stable karo.
 
----
-
-## Principle 2
-
-Workflow is king.
+### States
 
 ```text
-Workflow
->
-Provider
->
-Model
+UNKNOWN
+AUTHENTICATED
+AUTH_REQUIRED
+HUMAN_VERIFICATION
+RATE_LIMITED
+BANNED
 ```
 
-Providers execute work.
+### Checks
 
-Workflow owns state.
-
----
-
-## Principle 3
-
-DeepSeek is consulted.
-
-DeepSeek is not the operating system.
-
-Use DeepSeek only when deterministic logic cannot solve the problem.
-
----
-
-## Principle 4
-
-Browser workers are first-class citizens.
-
-Browser transports are not fallback systems.
-
-Browser workers are equal to API workers.
-
----
-
-# HIGH LEVEL ARCHITECTURE
+Before every prompt:
 
 ```text
-User
- ↓
+Cookie Loaded?
+↓
+Chat Page Loaded?
+↓
+Input Visible?
+↓
+Send Button Visible?
+```
 
-Gateway
- ↓
+If no:
 
-Workflow Engine
- ↓
-
-Scheduler
- ↓
-
-Control Plane
- ↓
-
-Workspace Runtime
- ↓
-
-Provider Runtime
- ↓
-
-Transport Runtime
-
- ├── Browser Workers
- ├── API Workers
- └── Local Workers
-
- ↓
-
-Response Validation
- ↓
-
-Memory
- ↓
-
-Event Journal
+```text
+Auth Failure
 ```
 
 ---
 
-# WORKFLOW ENGINE
+# Layer 1 - Browser Worker
 
-The Workflow Engine is the most important component.
-
-The system is workflow-driven.
-
-Not provider-driven.
-
-Not model-driven.
-
----
-
-## State Machine
+One Provider
 
 ```text
-CREATED
- ↓
+Qwen Worker
 
-PLANNING
- ↓
+DeepSeek Worker
 
-EXECUTING
- ↓
+Kimi Worker
 
-TESTING
- ↓
-
-REVIEWING
- ↓
-
-DONE
+...
 ```
 
----
-
-## Failure Loop
+Each Worker:
 
 ```text
-EXECUTING
- ↓
-
-FAILED
- ↓
-
-REPLAN
- ↓
-
-EXECUTING
-```
-
----
-
-## Workflow Responsibilities
-
-- state ownership
-- retries
-- replanning
-- checkpoints
-- resumability
-- task graph generation
-
----
-
-# CONTROL PLANE
-
-The Control Plane decides:
-
-- task classification
-- provider selection
-- routing
-- replanning
-- validation escalation
-
----
-
-## Tiered Intelligence
-
-### Tier 0
-
-No AI
-
-```text
-Selector Cache
-Rule Engine
-Heuristics
-Known Patterns
-```
-
----
-
-### Tier 1
-
-Cheap Intelligence
-
-Used for:
-
-```text
-classification
-basic validation
-dom labeling
-light summarization
-```
-
-Only invoked when Tier 0 fails.
-
----
-
-### Tier 2
-
-DeepSeek
-
-Used for:
-
-```text
-planning
-replanning
-code review
-architecture review
-complex dom analysis
-workflow repair
-```
-
-DeepSeek should never be used for routine operations.
-
----
-
-# PROVIDER RUNTIME
-
-Provider and Transport are separate.
-
----
-
-## Provider Layer
-
-```text
-ChatGPT
-Qwen
-DeepSeek
-Kimi
-```
-
----
-
-## Transport Layer
-
-```text
-API
 Browser
-Local
-```
-
----
-
-## Example
-
-```text
-Qwen
- ├── API
- └── Browser
-
-ChatGPT
- ├── API
- └── Browser
-
-DeepSeek
- └── API
-
-Kimi
- └── Browser
-```
-
----
-
-# BROWSER WORKER POOL
-
-Each browser worker owns:
-
-```text
-Session
-Lease
 Context
-```
-
-Examples:
-
-```text
-ChatGPT-1
-ChatGPT-2
-
-Qwen-1
-Qwen-2
-
-Kimi-1
+Page
+Cookie Jar
+State Machine
 ```
 
 ---
 
-# UI INTELLIGENCE LAYER
+# Layer 2 - Page Sensors
 
-This is the most important browser component.
-
-Never parse full HTML blindly.
-
----
-
-## Pipeline
+Priority:
 
 ```text
-Selector Cache
+Network
  ↓
-
-Accessibility Tree
+Accessibility
  ↓
-
-DOM Snippets
+DOM
  ↓
-
-DeepSeek Analysis
- ↓
-
 Vision
 ```
 
 ---
 
-# Stage 1
+## Network Sensor
 
-Selector Cache
+Watch:
 
-```json
-{
-  "input": "...",
-  "send": "...",
-  "assistant": "..."
-}
+```text
+XHR
+
+Fetch
+
+SSE
+
+WebSocket
 ```
 
-Fast path.
+Collect:
 
-No AI.
+```text
+Request URL
+
+Response URL
+
+Payload
+
+Content-Type
+
+Timestamp
+```
 
 ---
 
-# Stage 2
+## DOM Sensor
 
-Accessibility Snapshot
+Collect:
+
+```text
+Input Visible
+
+Send Visible
+
+Stop Visible
+
+Error Visible
+
+Auth Visible
+```
+
+No text extraction.
+
+No decisions.
+
+---
+
+## Accessibility Sensor
+
+Collect:
+
+```text
+Role
+
+Name
+
+State
+
+Hierarchy
+```
+
+Used for selector recovery.
+
+---
+
+## Vision Sensor
+
+Only if everything else fails.
+
+Never primary.
+
+---
+
+# Layer 3 - State Machine
+
+States:
+
+```text
+BOOTING
+
+AUTH_REQUIRED
+
+HUMAN_VERIFICATION
+
+READY
+
+PROMPT_TYPED
+
+PROMPT_SENT
+
+GENERATING
+
+COMPLETE
+
+RATE_LIMITED
+
+ERROR
+```
+
+---
+
+Transitions:
+
+```text
+READY
+ ↓
+PROMPT_TYPED
+ ↓
+PROMPT_SENT
+ ↓
+GENERATING
+ ↓
+COMPLETE
+```
+
+---
+
+# Layer 4 - Response Engine
+
+Most important layer.
+
+Current bug:
+
+```text
+Network sees response
+
+But content lost
+```
+
+Fix:
+
+```text
+Chunk
+ ↓
+Buffer
+ ↓
+Parser
+ ↓
+Final Text
+```
+
+Store:
+
+```text
+Request ID
+
+Provider
+
+Timestamp
+
+Payload
+```
+
+Never:
+
+```python
+push_event(data=None)
+```
+
+---
+
+# Layer 5 - Response Classifier
+
+Before buffering:
+
+Classify:
+
+```text
+CHAT
+
+ANALYTICS
+
+TELEMETRY
+
+AUTH
+
+UNKNOWN
+```
+
+Only:
+
+```text
+CHAT
+```
+
+goes to buffer.
+
+---
+
+# Layer 6 - Completion Detection
+
+Never:
+
+```python
+sleep(60)
+```
 
 Use:
 
-```python
-page.accessibility.snapshot()
+```text
+Network Activity
+
+Mutation Rate
+
+Response Growth
 ```
 
-Advantages:
-
-- compact
-- semantic
-- stable
-- low token cost
-
----
-
-# Stage 3
-
-DOM Snippet Extraction
-
-Extract only:
+Completion:
 
 ```text
-candidate buttons
-candidate inputs
-candidate message containers
-```
-
-Never send full HTML.
-
----
-
-# Stage 4
-
-DeepSeek DOM Analysis
-
-Input:
-
-```json
-{
-  "nodes": [...]
-}
-```
-
-Output:
-
-```json
-{
-  "input": "...",
-  "send": "...",
-  "assistant": "...",
-  "confidence": 0.92
-}
+No Stream Activity
++
+No Response Growth
++
+No DOM Mutations
 ```
 
 ---
 
-# Stage 5
+# Layer 7 - Recovery
 
-Vision Fallback
-
-Last resort only.
-
-Flow:
+Recovery Order:
 
 ```text
-Screenshot
- ↓
+Retry
 
-DeepSeek Vision
- ↓
+↓
 
-Recovered Coordinates
+Dismiss Popup
+
+↓
+
+Selector Recovery
+
+↓
+
+Accessibility Recovery
+
+↓
+
+Refresh
+
+↓
+
+Reload Cookies
+
+↓
+
+New Browser Context
+
+↓
+
+Provider Cooldown
 ```
-
-Vision must never be the default path.
 
 ---
 
-# UI SCHEMA ENGINE
+# Popup Handling
 
-All providers are normalized into one schema.
+Detect:
 
-```json
-{
-  "messages": [],
-  "input_box": {},
-  "send_button": {},
-  "streaming": false
-}
+```text
+Cookie Banner
+
+Newsletter Popup
+
+Upgrade Popup
+
+Rate Limit Popup
+
+Modal Overlay
 ```
 
-The rest of the system consumes only this schema.
+Rule:
+
+```text
+If modal blocks input
+
+Find close button
+
+Dismiss immediately
+```
 
 ---
 
-# ACCOUNT MANAGEMENT
+# Cloudflare / Captcha
+
+New State:
+
+```text
+HUMAN_VERIFICATION
+```
+
+Detect:
+
+```text
+Just a moment
+
+Checking your browser
+
+Verify you are human
+
+Turnstile
+
+Captcha
+```
+
+Actions:
+
+```text
+Pause Worker
+
+Capture Screenshot
+
+Raise Event
+```
+
+Do NOT loop.
+
+Do NOT spam refresh.
+
+---
+
+# Metrics
+
+Per Provider:
+
+```text
+Success Rate
+
+Auth Rate
+
+Response Rate
+
+Average Latency
+
+Captcha Frequency
+
+Popup Frequency
+
+Recovery Frequency
+```
+
+---
+
+# Mathematical Model
+
+Readiness:
+
+P(READY)=\sum_i w_i x_i
+
+Where:
+
+```text
+x_i = sensor signal
+
+w_i = learned weight
+```
+
+---
+
+Provider Score:
+
+Score=P(success)\times Availability/Latency
+
+Used for routing.
+
+---
+
+# Execution Plan
+
+## Phase 1 (Current Blocker)
+
+Fix:
+
+```text
+Response Capture
+```
+
+Goal:
+
+```text
+Qwen
+↓
+Prompt
+↓
+Actual Answer
+```
+
+No empty string.
+
+---
+
+## Phase 2
+
+Fix:
+
+```text
+Response Classifier
+```
+
+Remove:
+
+```text
+Telemetry
+
+Analytics
+
+Tracking Pings
+```
+
+---
+
+## Phase 3
+
+Fix:
+
+```text
+Auth Detection
+```
 
 Separate:
 
 ```text
-Account Health
+AUTH_REQUIRED
+
+HUMAN_VERIFICATION
 ```
 
-from
+---
+
+## Phase 4
+
+Popup Manager
+
+Auto dismiss:
 
 ```text
-Lease State
+Cookie
+
+Newsletter
+
+Upgrade
+
+Modal
 ```
 
 ---
 
-## Account Health States
+## Phase 5
+
+Cloudflare / Captcha Detection
+
+No solving.
+
+Only:
 
 ```text
-READY
-DEGRADED
-COOLDOWN
-JAIL
+Detect
+
+Pause
+
+Notify
 ```
 
 ---
 
-## Lease States
+## Phase 6
+
+Provider Health Dashboard
+
+Show:
 
 ```text
-FREE
-LEASED
-EXPIRED
-RELEASED
+Ready
+
+Auth
+
+Generating
+
+Complete
+
+Error
 ```
 
 ---
 
-# REACTIVE LEASE MANAGER
+# NON-NEGOTIABLE RULE
 
-Critical component.
-
----
-
-## Event Flow
+Before building:
 
 ```text
-Account
- ↓
-
-JAIL
- ↓
-
-Lease Manager
- ↓
-
-Force Expire Lease
- ↓
-
-Workflow Engine
- ↓
-
-REPLAN
-```
-
-No stale leases allowed.
-
----
-
-# SCHEDULER
-
-Resource-based.
-
-Never CPU-only.
-
----
-
-## Inputs
-
-```text
-Available RAM
-Browser Context Count
-Provider Limits
-Queue Depth
-```
-
----
-
-## Formula
-
-```text
-MaxRunners =
-min(
- AvailableBrowserContexts,
- AvailableRAM / AvgContextRAM,
- ProviderConcurrency,
- ConfiguredLimit
-)
-```
-
----
-
-# MEMORY SYSTEM
-
-Three-tier model.
-
----
-
-## HOT
-
-RAM
-
-Contains:
-
-```text
-recent turns
-active state
-live workflow context
-```
-
----
-
-## WARM
-
-Compressed Memory
-
-Contains:
-
-```text
-summaries
-compressed conversations
-```
-
----
-
-## COLD
-
-Persistent Storage
-
-Contains:
-
-```text
-artifacts
-logs
-history
-screenshots
-```
-
----
-
-# WORKSPACE RUNTIME
-
-The Workspace Runtime owns code.
-
-Not OpenCode.
-
-Not Aider.
-
----
-
-## Components
-
-```text
-Workspace
-Git
-AST Engine
-Sandbox
-```
-
----
-
-## File Operations
-
-```python
-read_file()
-write_file()
-patch_file()
-search_code()
-list_tree()
-```
-
----
-
-# AST PATCH ENGINE
-
-Preferred editing mechanism.
-
-Avoid:
-
-```text
-regex
-string replacement
-```
-
-Use:
-
-```text
-Tree-sitter
-AST-based patching
-```
-
-Benefits:
-
-- syntax safety
-- precise edits
-- lower corruption rate
-
----
-
-## Validation
-
-Every patch must pass:
-
-```python
-ast.parse()
-```
-
-or language-specific validation.
-
-Before commit.
-
----
-
-# SANDBOX RUNTIME
-
-All code execution happens in isolation.
-
----
-
-## Responsibilities
-
-```text
-run tests
-execute code
-lint
-format
-verify
-```
-
----
-
-## Constraints
-
-```text
-resource limits
-timeouts
-filesystem isolation
-```
-
----
-
-# OPENCODE INTEGRATION
-
-OpenCode is an execution backend.
-
-Not the core architecture.
-
----
-
-## Runtime
-
-```text
-Workspace Runtime
- ├── OpenCode
- ├── Aider
- └── Native Runtime
-```
-
----
-
-# RESPONSE VALIDATION
-
-Every provider response passes validation.
-
----
-
-## Flow
-
-```text
-Provider
- ↓
-
-Validator
- ↓
-
-Accept
-Retry
-Fallback
-```
-
----
-
-## Validation Levels
-
-### Level 1
-
-Deterministic
-
-```text
-schema checks
-json checks
-syntax checks
-```
-
-### Level 2
-
-DeepSeek Review
-
-Only if required.
-
----
-
-# EVENT JOURNAL
-
-Append-only.
-
-Never mutate.
-
----
-
-## Example
-
-```json
-{
-  "task": "123",
-  "agent": "coder",
-  "action": "patch_file",
-  "status": "success",
-  "timestamp": "..."
-}
-```
-
----
-
-# ARTIFACT STORE
-
-Per-task storage.
-
-```text
-artifacts/
-
-task_id/
-
-  plans/
-  code/
-  reports/
-  screenshots/
-  patches/
-```
-
----
-
-# SELF-HEALING SYSTEM
-
-## UI Failure
-
-```text
-Selector Broken
- ↓
-
-Selector Cache Miss
- ↓
-
-Accessibility Tree
- ↓
-
-DOM Analysis
- ↓
-
-Recovered
-```
-
----
-
-## If Recovery Fails
-
-```text
-DOM Analysis Failed
- ↓
-
-Vision Recovery
- ↓
-
-Recovered
-```
-
----
-
-## If Vision Fails
-
-```text
-Provider Quarantine
- ↓
-
-Alert
- ↓
-
-Fallback Provider
-```
-
----
-
-# DEEPSEEK RESPONSIBILITIES
-
-DeepSeek should only perform:
-
-```python
-plan()
-replan()
-review()
-architecture_review()
-complex_dom_analysis()
-```
-
-DeepSeek should not be used for:
-
-```python
-simple_classification()
-basic_validation()
-cached_dom_recovery()
-```
-
----
-
-# P0 IMPLEMENTATION ROADMAP
-
-## P0.1
-
-Accessibility Runtime
-
-```python
-page.accessibility.snapshot()
-```
-
----
-
-## P0.2
-
-UI Schema Engine
-
-Provider-independent UI representation.
-
----
-
-## P0.3
-
-Reactive Lease Manager
-
-Account state event system.
-
----
-
-## P0.4
-
-Workspace Runtime
-
-Git + AST + Sandbox.
-
----
-
-## P0.5
-
-DeepSeek Control Plane
-
-Planning and workflow intelligence.
-
----
-
-# FINAL SYSTEM MENTAL MODEL
-
-```text
-Workflow Engine
-     = Soul
-
-DeepSeek
-     = Brain
-
-Workspace Runtime
-     = Hands
-
-Browser Workers
-     = Labour
-
-UI Intelligence Layer
-     = Eyes
-
+Bayesian Learning
+Entropy Engine
+Provider Brain
 Scheduler
-     = Nervous System
-
-Event Journal
-     = Memory
+Shadow Ban Detector
 ```
 
-If providers change:
+Prove this works:
 
-System survives.
+```text
+Open Provider
+↓
+Load Cookies
+↓
+Input Found
+↓
+Prompt Sent
+↓
+Response Captured
+↓
+Correct Text Returned
+```
 
-If selectors change:
+For:
 
-System survives.
+```text
+Qwen
+DeepSeek
+Kimi
+ZAI
+MiniMax
+MiMo
+ChatGPT
+```
 
-If accounts fail:
+Until that flow is stable, no new architecture work is allowed.
 
-System survives.
-
-If workflows survive:
-
-The platform survives.
+```

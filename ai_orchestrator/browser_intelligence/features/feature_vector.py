@@ -68,7 +68,7 @@ class FeatureVector:
     url: str = ""
 
     def to_list(self) -> list[float]:
-        # Binary features (19): boolean indicators
+        # Binary features (18): boolean indicators
         binary = [
             float(self.input_visible),           # 0
             float(self.send_enabled),            # 1
@@ -88,9 +88,8 @@ class FeatureVector:
             float(self.generation_completed),    # 15
             float(self.stream_closed),           # 16
             float(self.generation_stop_detected),# 17
-            float(self.a11y_extraction_success), # 18
         ]
-        # Continuous features (14): rates, lengths, counts
+        # Continuous features (12): rates, lengths, counts
         continuous = [
             float(self.mutation_rate),           # 0
             float(self.mutation_acceleration),   # 1
@@ -104,8 +103,6 @@ class FeatureVector:
             float(self.total_chunks),            # 9
             float(self.bytes_received),          # 10
             float(self.network_request_rate),    # 11
-            float(self.a11y_confidence),         # 12
-            float(self.a11y_node_count),         # 13
         ]
         return binary + continuous
 

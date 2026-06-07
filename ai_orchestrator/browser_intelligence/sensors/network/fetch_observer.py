@@ -30,6 +30,10 @@ class FetchObserver:
 
     def on_response_received(self, event: dict) -> bool:
         response = event.get("response", {})
+        url = response.get("url", "").lower()
+        if any(ext in url for ext in (".js", ".css", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".woff", ".woff2", ".ttf", ".eot", ".wasm")):
+            return False
+
         response_headers = response.get("headers", {})
         transfer_encoding = (
             response_headers.get("transfer-encoding", "")
@@ -41,6 +45,9 @@ class FetchObserver:
             or response_headers.get("content-type", "")
             or response_headers.get("Content-Type", "")
         ).lower()
+
+        if any(x in content_type for x in ("javascript", "css", "image", "font", "audio", "video")):
+            return False
 
         request_id = event.get("requestId", "")
         is_streaming = False

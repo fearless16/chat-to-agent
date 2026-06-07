@@ -1,0 +1,44 @@
+{
+  "cookies": [
+    {
+      "domain": ".xiaomimimo.com",
+      "expirationDate": 1783397479.206466,
+      "hostOnly": false,
+      "httpOnly": true,
+      "name": "serviceToken",
+      "path": "/",
+      "sameSite": "unspecified",
+      "secure": false,
+      "session": false,
+      "storeId": "0",
+      "value": "\"lBp+en8jmZclRZ3zFZn3GLJXTujqIDFHDcl3ARUa+Bh5I+1RfOdiFHkWCNrYxgVsdEpdtnpZ3uSf3QrbKB4Suv3M6qVkI/WtdgJxGdJmpXnv3/kB3eDmTvUKxKqUAhlL8VAXuz3sEOb6TgXz/GsNJfJxeZEmbMFKRpsM1blgWhY4rhpqpwDF1VBlAMjKo/flxR8CP4/F1k9X952Br+GuPX3apaZ2tCMFsxQC7vBabgKbJZrs0M8rbYmjQuBLcXUN98OA82hw8L8ridzXTh30+fitBgJwETxZFCYk7mi1+V4GHjdSRi+lkV84wdRSHcDP0PrVjnqee5Wk8tf6KGlRUYQcluYQXlYDZzcCgkXJ7rk=\""
+    },
+    {
+      "domain": ".xiaomimimo.com",
+      "expirationDate": 1783426279.206509,
+      "hostOnly": false,
+      "httpOnly": false,
+      "name": "userId",
+      "path": "/",
+      "sameSite": "unspecified",
+      "secure": false,
+      "session": false,
+      "storeId": "0",
+      "value": "5697916973"
+    },
+    {
+      "domain": ".xiaomimimo.com",
+      "expirationDate": 1783397479.206558,
+      "hostOnly": false,
+      "httpOnly": false,
+      "name": "xiaomichatbot_ph",
+      "path": "/",
+      "sameSite": "unspecified",
+      "secure": false,
+      "session": false,
+      "storeId": "0",
+      "value": "\"KXn9wbtM+IDwZqtB38mE4w==\""
+    }
+  ],
+  "origins": []
+}

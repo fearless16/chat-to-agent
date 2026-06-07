@@ -1,135 +1,167 @@
-"""Real browser test — all 7 UI adapters with cookie / auth profiles."""
-
+"""Parallel provider test — all 7 at once, 2-min hard timeout, screenshots."""
 from __future__ import annotations
 
 import asyncio
 import json
 import sys
+import time
+import os
 from pathlib import Path
 
-from ai_orchestrator.adapters.cookie_to_storage_state import netscape_cookies_to_storage_state
+import httpx
 
-PROFILES_DIR = Path("profiles")
-PROMPT = "What is 2+2? Reply in ONE word only."
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-# Netscape-format cookie files (profiles/<name>.txt)
-COOKIE_MAP = {
-    "deepseek_ui":   "deepseek_cookies.txt",
-    "kimi_ui":       "kimi_cookies.txt",
-    "z_ai_ui":       "zai_cookies.txt",
-    "xiaomimimo_ui": "xiaomimimo_cookies.txt",
-    "minimax_ui":    "minimax_cookies.txt",
-}
+SCREENSHOT_DIR = Path(__file__).resolve().parent.parent / "diagnostic_screenshots"
+SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
 
-# Playwright storage_state JSON files (in repo root)
-AUTH_JSON_MAP = {
-    "chatgpt_ui": "chatgpt_auth.json",
-    "qwen_ui":    "qwen_auth.json",
-}
-
-ADAPTER_MAP = {
-    "chatgpt_ui":   ("ai_orchestrator.adapters.chatgpt_ui",    "ChatGPTUIAdapter"),
-    "deepseek_ui":  ("ai_orchestrator.adapters.deepseek_ui",   "DeepSeekUIAdapter"),
-    "kimi_ui":      ("ai_orchestrator.adapters.kimi_ui",       "KimiUIAdapter"),
-    "z_ai_ui":      ("ai_orchestrator.adapters.zai_ui",        "ZAIUIAdapter"),
-    "xiaomimimo_ui":("ai_orchestrator.adapters.xiaomimimo_ui", "XiaomiMiMoUIAdapter"),
-    "minimax_ui":   ("ai_orchestrator.adapters.minimax_ui",    "MiniMaxUIAdapter"),
-    "qwen_ui":      ("ai_orchestrator.adapters.qwen_ui",       "QwenUIAdapter"),
-}
+PROVIDERS = ["chatgpt_ui", "deepseek_ui", "kimi_ui", "qwen_ui", "z_ai_ui", "xiaomimimo_ui", "minimax_ui"]
 
 
-def _load_storage_state(name: str) -> dict | None:
-    if name in COOKIE_MAP:
-        cookie_path = PROFILES_DIR / COOKIE_MAP[name]
-        if cookie_path.exists():
-            return netscape_cookies_to_storage_state(cookie_path)
-    if name in AUTH_JSON_MAP:
-        auth_path = Path(AUTH_JSON_MAP[name])
-        if auth_path.exists():
-            with auth_path.open() as fh:
-                return json.load(fh)
+async def run_server():
+    """Start uvicorn, wait up to 30s."""
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-m", "uvicorn",
+        "ai_orchestrator.orchestrator.main:app",
+        "--host", "127.0.0.1", "--port", "8766",
+        cwd=str(Path(__file__).resolve().parent.parent),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env={"PYTHONPATH": str(Path(__file__).resolve().parent.parent)},
+    )
+    for _ in range(30):
+        try:
+            r = httpx.get("http://127.0.0.1:8766/v1/models", timeout=2)
+            if r.status_code == 200:
+                print("Server UP")
+                return proc
+        except Exception:
+            await asyncio.sleep(1)
+    print("Server FAILED to start")
     return None
 
 
-async def test_provider(name: str) -> dict:
-    mod_name, cls_name = ADAPTER_MAP[name]
-    mod = __import__(mod_name, fromlist=[cls_name])
-    adapter_cls = getattr(mod, cls_name)
+async def test_one(provider: str) -> dict:
+    """Hit one provider NS + streaming, return structured result."""
+    BASE = "http://127.0.0.1:8766"
+    PROMPT = "Say exactly: 'The answer is 42.' Do not add anything else."
+    result = {"provider": provider}
 
-    storage_state = _load_storage_state(name)
-
-    adapter = adapter_cls(
-        mock_mode=False,
-        headless=True,
-        stealth=True,
-        timeout_ms=90_000,
-        storage_state=storage_state,
-        persistent_profile=None,
-        channel="chromium",
-    )
-
-    result = {
-        "provider": name,
-        "success": False,
-        "content": "",
-        "error": "",
-        "latency_ms": 0,
-        "model": "",
-        "has_storage_state": storage_state is not None,
-    }
-
+    # Non-streaming
+    t0 = time.monotonic()
     try:
-        resp = await adapter.send(PROMPT, context=None)
-        result["success"] = resp.success
-        result["latency_ms"] = resp.latency_ms
-        result["model"] = resp.model
-        if resp.success:
-            result["content"] = resp.content[:500]
+        r = httpx.post(f"{BASE}/v1/chat/completions",
+            json={"model": provider, "messages": [{"role": "user", "content": PROMPT}]},
+            timeout=115)
+        lat = round(time.monotonic() - t0, 1)
+        if r.status_code == 200:
+            body = r.json()
+            msg = body.get("choices", [{}])[0].get("message", {})
+            result["ns"] = {
+                "ok": True, "latency_s": lat, "status": 200,
+                "content": msg.get("content", ""),
+                "reasoning": msg.get("reasoning_content"),
+            }
         else:
-            result["error"] = resp.error or "unknown error"
-    except Exception as exc:
-        result["error"] = str(exc)
-    finally:
-        await adapter.close()
+            result["ns"] = {"ok": False, "latency_s": lat, "status": r.status_code, "detail": r.text[:500]}
+    except Exception as e:
+        result["ns"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    # Streaming
+    t0 = time.monotonic()
+    try:
+        chunks, reasoning = [], []
+        async with httpx.AsyncClient(timeout=115) as ac:
+            async with ac.stream("POST",
+                f"{BASE}/v1/chat/completions",
+                json={"model": provider, "messages": [{"role": "user", "content": PROMPT}], "stream": True}
+            ) as r:
+                lat = round(time.monotonic() - t0, 1) if r.status_code != 200 else None
+                if r.status_code != 200:
+                    result["st"] = {"ok": False, "status": r.status_code, "detail": (await r.aread())[:500]}
+                else:
+                    async for line in r.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        data = line[6:]
+                        if data == "[DONE]":
+                            break
+                        try:
+                            obj = json.loads(data)
+                            d = obj.get("choices", [{}])[0].get("delta", {})
+                            if d.get("reasoning_content"):
+                                reasoning.append(d["reasoning_content"])
+                            if d.get("content"):
+                                chunks.append(d["content"])
+                        except json.JSONDecodeError:
+                            continue
+                    lat = round(time.monotonic() - t0, 1)
+                    result["st"] = {
+                        "ok": True, "latency_s": lat, "chunks": len(chunks),
+                        "reasoning_chunks": len(reasoning),
+                        "content": "".join(chunks)[:300] if chunks else None,
+                        "reasoning": "".join(reasoning)[:300] if reasoning else None,
+                    }
+    except Exception as e:
+        result["st"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
     return result
 
 
 async def main():
-    providers = list(ADAPTER_MAP)
-    results = []
+    proc = await run_server()
+    if proc is None:
+        return
 
-    for i, name in enumerate(providers):
-        print(f"\n{'='*60}")
-        print(f"[{i+1}/{len(providers)}] Testing {name}...")
-        print(f"{'='*60}")
-        result = await test_provider(name)
-        results.append(result)
+    print(f"\nFiring {len(PROVIDERS)} providers IN PARALLEL with 120s hard timeout\n")
+    sys.stdout.flush()
 
-        if result["success"]:
-            print(f"  OK   ({result['latency_ms']:.0f}ms)  model={result['model']}")
-            print(f"  >>>  {result['content'][:200]}")
-        else:
-            print(f"  FAIL ({result['latency_ms']:.0f}ms)  has_storage_state={result['has_storage_state']}")
-            print(f"  ERR  {result['error'][:300]}")
+    # FAN OUT — all at once
+    tasks = {p: asyncio.create_task(test_one(p)) for p in PROVIDERS}
+    completed, pending = await asyncio.wait(tasks.values(), timeout=120)
 
-    print(f"\n{'='*60}")
-    print("SUMMARY")
-    print(f"{'='*60}")
-    passed = sum(1 for r in results if r["success"])
-    print(f"  {passed}/{len(results)} providers responded successfully")
-    for r in results:
-        status = "OK  " if r["success"] else "FAIL"
-        snippet = (r["content"] or r["error"])[:80].replace("\n", " ")
-        print(f"  {status}  {r['provider']:<14}  {snippet}")
-    print()
+    # Cancel stragglers
+    for t in pending:
+        t.cancel()
 
-    # Dump structured JSON for downstream consumption.
-    Path("ui_adapter_results.json").write_text(json.dumps(results, indent=2))
-    print(f"  >> wrote ui_adapter_results.json")
+    results = {}
+    for p, t in tasks.items():
+        try:
+            results[p] = t.result()
+        except asyncio.CancelledError:
+            results[p] = {"provider": p, "ns": {"ok": False, "error": "TIMEOUT"}, "st": {"ok": False, "error": "TIMEOUT"}}
 
-    return 0 if passed == len(results) else 1
+    # Print results
+    print("\n" + "=" * 90)
+    print(f"{'Provider':<18} {'NS':<6} {'NS Lat':<8} {'NS C':<6} {'NS R':<6} {'ST':<6} {'ST Ch':<6} {'ST Lat':<8} {'Error/Content':<30}")
+    print("=" * 90)
+    for p in PROVIDERS:
+        r = results.get(p, {})
+        ns = r.get("ns", {})
+        st = r.get("st", {})
+        ns_ok = "OK" if ns.get("ok") else "NO"
+        ns_lat = f"{ns.get('latency_s','-')}s"
+        ns_c = f"{len(ns.get('content',''))}" if ns.get("content") else "0"
+        ns_r = f"{len(ns.get('reasoning',''))}" if ns.get("reasoning") else "0"
+        st_ok = "OK" if st.get("ok") else "NO"
+        st_ch = str(st.get("chunks", 0))
+        st_lat = f"{st.get('latency_s','-')}s" if st.get("latency_s") else "-"
+        detail = ns.get("content", ns.get("detail", ns.get("error", st.get("detail", st.get("error", "")))))[:30]
+        print(f"{p:<18} {ns_ok:<6} {ns_lat:<8} {ns_c:<6} {ns_r:<6} {st_ok:<6} {st_ch:<6} {st_lat:<8} {detail:<30}")
+
+    # Summary line
+    ok_count = sum(1 for p in PROVIDERS if results.get(p, {}).get("ns", {}).get("ok") or results.get(p, {}).get("st", {}).get("ok"))
+    print(f"\n{ok_count}/{len(PROVIDERS)} providers returned a result (NS or ST)")
+
+    # Write full results
+    out_path = "diagnostic_output/all_providers_parallel_test.json"
+    with open(out_path, "w") as f:
+        json.dump(results, f, indent=2, default=str, ensure_ascii=False)
+    print(f"Results: {out_path}")
+
+    proc.terminate()
+    await proc.wait()
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main()))
+    asyncio.run(main())

@@ -11,9 +11,16 @@ from ai_orchestrator.utils.backoff import CircuitBreaker
 
 
 class ProviderResponse(BaseModel):
-    """Standard response from any provider adapter."""
+    """Standard response from any provider adapter.
+
+    ``reasoning_content`` captures the model's internal chain-of-thought
+    (e.g. DeepSeek-R1 reasoning, o1/o3 thinking, Qwen thinking phase).
+    Set to ``None`` when the provider does not expose reasoning or the
+    adapter cannot separate it from the final answer.
+    """
 
     content: str = Field(default="")
+    reasoning_content: str | None = Field(default=None)
     model: str = Field(default="unknown")
     usage: dict | None = Field(default=None)
     latency_ms: float = Field(default=0.0)

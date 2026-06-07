@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import re
 
 from ai_orchestrator.browser_intelligence.decision.completion import CompletionEngine
 from ai_orchestrator.browser_intelligence.decision.confidence import ConfidenceEngine
@@ -60,6 +61,13 @@ TICK_INTERVAL: float = 1.0
 
 STREAM_STALLED_IDLE_SECONDS: float = 5.0
 
+# Status / role tokens to skip in delta extraction.
+_STATUS_LABEL_RE = re.compile(
+    r"^(assistant|user|system|typing|thinking|finished|generating|pending|"
+    r"streaming|complete|stopped|queued)$",
+    re.IGNORECASE,
+)
+
 
 def _coerce_sse_text(raw: str) -> str:
     """Turn a raw SSE stream (`data: {json}` lines) or a stream of bare
@@ -73,6 +81,7 @@ def _coerce_sse_text(raw: str) -> str:
     import json as _json
     out: list[str] = []
     saw_delta = False
+    saw_json = False  # Track if we parsed any JSON (even if filtered)
     for line in raw.splitlines():
         line = line.strip()
         if not line:
@@ -92,10 +101,11 @@ def _coerce_sse_text(raw: str) -> str:
             continue
         if not isinstance(obj, dict):
             continue
+        saw_json = True
         matched = False
         for v in _DELTA_KEYS_TO_TRY:
             val = _walk_path(obj, v)
-            if isinstance(val, str) and val:
+            if isinstance(val, str) and val and not _STATUS_LABEL_RE.match(val):
                 out.append(val)
                 matched = True
                 saw_delta = True
@@ -109,6 +119,10 @@ def _coerce_sse_text(raw: str) -> str:
                 break
     if saw_delta:
         return "".join(out)
+    # If we parsed JSON lines but all values were status labels,
+    # return empty — not the raw SSE text.
+    if saw_json:
+        return ""
     return raw
 
 
@@ -128,7 +142,7 @@ def _walk_delta_strings(obj) -> list[tuple[str, str]]:
         seen.add(id(cur))
         if isinstance(cur, dict):
             for k, v in cur.items():
-                if isinstance(v, str) and v and k.lower() in delta_keys:
+                if isinstance(v, str) and v and k.lower() in delta_keys and not _STATUS_LABEL_RE.match(v):
                     out.append((k, v))
                 elif isinstance(v, (dict, list)):
                     stack.append(v)
@@ -667,51 +681,14 @@ class BrowserIntelligenceEngine:
     def get_response_text(self) -> str:
         """Return the assembled response text from the engine-owned
         capture layer.
-
-        Pipeline:
-            CDP body event
-                ↓
-            ResponseClassifier.classify(url, ct, …)
-                ↓
-            ResponseCapture.append_chunk(request_id, body)   (only if CHAT_RESPONSE)
-                ↓
-            self.get_response_text() returns the assembled text
-
-        Non-chat responses (analytics, telemetry, auth, conversation
-        list) are rejected at the door, so `engine.get_response_text()`
-        returns the actual model reply — not a tracking ping.
-
-        For backward compat we still consult the legacy per-observer
-        buffers as a backstop, but only after the new layer returns
-        nothing.
         """
-        # Phase 1: transport-native, classified capture.
         text = self._capture.get_response_text()
         if text:
             return _coerce_sse_text(text)
 
-        # Backstop: legacy observer buffers. These are still useful
-        # when the streaming CDP session fails to attach (some headless
-        # configurations block Network.streamResourceContent).
-        sse_text = self._composer._network._sse_observer.get_response_text()
-        ws_text = self._composer._network._ws_observer.get_response_text()
-        fetch_text = self._composer._network._fetch_observer.get_response_text()
-
-        # Pick the longest text — but only after the new layer
-        # produced nothing, so a recent classified chat response wins.
-        candidates: list[tuple[str, str]] = []
-        if sse_text:
-            candidates.append(("sse", sse_text))
-        if ws_text:
-            candidates.append(("ws", ws_text))
-        if fetch_text:
-            candidates.append(("fetch", fetch_text))
-        if not candidates:
-            return ""
-        # Sort by length, take the longest, then coerce SSE/JSON deltas.
-        candidates.sort(key=lambda kv: len(kv[1]), reverse=True)
-        _kind, raw = candidates[0]
-        return _coerce_sse_text(raw)
+        # Backstop disabled to avoid JS/CSS pollution.
+        # Fallback should be handled by the UI adapter via DOM extraction.
+        return ""
 
     def get_response_text_sse(self) -> str:
         """Convenience: return the SSE response text without coercion.

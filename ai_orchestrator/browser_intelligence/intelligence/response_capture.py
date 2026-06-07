@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Iterable
@@ -274,6 +275,14 @@ class ResponseCapture:
 # frames) into plain text deltas. Pure functions, no state.
 # ──────────────────────────────────────────────────────────────────────
 
+# Status / role tokens that pollute the response buffer when the
+# parser grabs metadata fields. See engine_adapter._STATUS_LABEL_RE.
+_STATUS_LABEL_RE = re.compile(
+    r"^(assistant|user|system|typing|thinking|finished|generating|pending|"
+    r"streaming|complete|stopped|queued)$",
+    re.IGNORECASE,
+)
+
 _DELTA_PATHS: tuple[tuple, ...] = (
     ("data", "delta_content"),
     ("data", "content"),
@@ -314,6 +323,7 @@ def parse_stream_chunk(raw: str) -> str:
         return ""
     out: list[str] = []
     saw_delta = False
+    saw_json = False
     for line in raw.splitlines():
         s = line.strip()
         if not s:
@@ -329,10 +339,11 @@ def parse_stream_chunk(raw: str) -> str:
             continue
         if not isinstance(obj, dict):
             continue
+        saw_json = True
         matched = False
         for path in _DELTA_PATHS:
             val = _walk_path(obj, path)
-            if isinstance(val, str) and val:
+            if isinstance(val, str) and val and not _STATUS_LABEL_RE.match(val):
                 out.append(val)
                 saw_delta = True
                 matched = True
@@ -340,12 +351,14 @@ def parse_stream_chunk(raw: str) -> str:
         if not matched:
             # Last-resort: walk and grab any string under a delta-like key.
             for k, val in _walk_delta_strings(obj):
-                if val:
+                if val and not _STATUS_LABEL_RE.match(val):
                     out.append(val)
                     saw_delta = True
                     break
     if saw_delta:
         return "".join(out)
+    if saw_json:
+        return ""
     return raw
 
 
@@ -363,7 +376,7 @@ def _walk_delta_strings(obj) -> Iterable[tuple[str, str]]:
         seen.add(id(cur))
         if isinstance(cur, dict):
             for k, v in cur.items():
-                if isinstance(v, str) and v and k.lower() in keys:
+                if isinstance(v, str) and v and k.lower() in keys and not _STATUS_LABEL_RE.match(v):
                     yield (k, v)
                 elif isinstance(v, (dict, list)):
                     stack.append(v)

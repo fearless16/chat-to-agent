@@ -37,6 +37,13 @@ from ai_orchestrator.orchestrator.workflow_engine import WorkflowEngine
 
 app = FastAPI(title="AI Orchestrator", version="0.1.0")
 
+# ── OpenAI-compatible API ────────────────────────────────────────
+from ai_orchestrator.orchestrator.openai_compat import router as openai_router
+
+app.include_router(openai_router)
+
+from ai_orchestrator.orchestrator.provider_health import health_tracker
+
 # ── Singleton state ──────────────────────────────────────────────
 lease_manager = LeaseManager()
 provider_router = ProviderRouter()
@@ -156,27 +163,70 @@ _PROVIDER_CLASS_MAP: dict[str, type[ProviderAdapter]] = {
 def _load_auth_for(provider: str) -> dict | None:
     """Resolve a Playwright storage_state dict for *provider*.
 
-    Looks for ``profiles/<provider>_cookies.txt`` (Netscape export) or
-    ``<provider>_auth.json`` in the repo root (Playwright storage_state).
+    Tries multiple naming conventions for cookie files on disk:
+      1. ``profiles/<provider>_cookies.txt``     (e.g. chatgpt_ui_cookies.txt)
+      2. ``profiles/<base>_cookies.txt``         (e.g. kimi_cookies.txt for kimi_ui)
+      3. ``<provider>_auth.json``                (Playwright storage_state export)
+      4. ``<base>_auth.json``                    (e.g. chatgpt_auth.json)
     """
-    cookie_path = Path(f"profiles/{provider}_cookies.txt")
-    if cookie_path.exists():
-        from ai_orchestrator.adapters.cookie_to_storage_state import (
-            netscape_cookies_to_storage_state,
-        )
-        return netscape_cookies_to_storage_state(cookie_path)
-    auth_path = Path(f"{provider}_auth.json")
-    if auth_path.exists():
-        with auth_path.open() as fh:
-            return json.load(fh)
+    # Derive base name by stripping trailing "_ui"
+    base = provider.removesuffix("_ui") if provider.endswith("_ui") else provider
+
+    # Try cookie files in order of specificity
+    cookie_candidates = [
+        Path(f"profiles/{provider}_cookies.txt"),
+        Path(f"profiles/{base}_cookies.txt"),
+    ]
+    for cookie_path in cookie_candidates:
+        if cookie_path.exists():
+            from ai_orchestrator.adapters.cookie_to_storage_state import (
+                netscape_cookies_to_storage_state,
+            )
+            return netscape_cookies_to_storage_state(cookie_path)
+
+    # Try Playwright storage_state JSON files
+    auth_candidates = [
+        Path(f"{provider}_auth.json"),
+        Path(f"{base}_auth.json"),
+    ]
+    for auth_path in auth_candidates:
+        if auth_path.exists():
+            with auth_path.open() as fh:
+                return json.load(fh)
+
     return None
+
+
+# Map of provider → persistent browser profile directory on disk.
+_PERSISTENT_PROFILE_MAP: dict[str, str] = {
+    "chatgpt_ui": "chatgpt_browser_profile",
+    "qwen_ui": "qwen_browser_profile",
+}
+
+
+# Map of provider → browser channel to use.
+# Chromium is required for CDP support (HMM engine, SSE capture, traffic classifier).
+# Firefox is only used where Cloudflare blocks Chromium automation (e.g. ChatGPT).
+_PROVIDER_CHANNEL_MAP: dict[str, str] = {
+    "chatgpt_ui": "firefox",    # Cloudflare blocks Chromium automation
+    # All others default to "chromium" for full CDP support.
+}
 
 
 def _build_adapter(
     provider: str,
     mock_mode: bool,
 ) -> ProviderAdapter:
-    """Construct an adapter for *provider* with auth wired in from disk."""
+    """Construct an adapter for *provider* with auth wired in from disk.
+
+    For browser providers in real mode:
+      - Uses a persistent browser profile if one exists on disk (preserves
+        full login session state including localStorage, IndexedDB, etc.)
+      - Falls back to storage_state (cookies) when no profile directory exists
+      - Runs ``headless=False`` so chat UIs don't detect and block automation
+      - Uses Chromium by default for CDP support; Firefox only for ChatGPT
+        (Cloudflare evasion)
+    """
     cls = _PROVIDER_CLASS_MAP.get(provider)
     if cls is None:
         raise HTTPException(
@@ -185,15 +235,27 @@ def _build_adapter(
         )
     if cls is LocalLLMAdapter:
         return cls(mock_mode=mock_mode)
-    storage_state = None if mock_mode else _load_auth_for(provider)
+
+    # In real mode, prefer persistent profile → then cookies
+    persistent_profile = None
+    storage_state = None
+    if not mock_mode:
+        profile_dir = _PERSISTENT_PROFILE_MAP.get(provider)
+        if profile_dir and Path(profile_dir).exists():
+            persistent_profile = profile_dir
+        else:
+            storage_state = _load_auth_for(provider)
+
+    channel = _PROVIDER_CHANNEL_MAP.get(provider, "chromium")
+
     return cls(
         mock_mode=mock_mode,
-        headless=True,
+        headless=False if not mock_mode else True,
         stealth=True,
-        timeout_ms=90_000,
+        timeout_ms=120_000,
         storage_state=storage_state,
-        persistent_profile=None,
-        channel="chromium",
+        persistent_profile=persistent_profile,
+        channel=channel,
     )
 
 
@@ -503,11 +565,40 @@ async def chat(req: ChatRequest) -> ChatResponse:
                     await adapter.close()
 
     results = [_to_chat_result(r, n) for r, n in zip(responses, provider_names)]
+
+    # Record health metrics for each result.
+    for r, name in zip(responses, provider_names):
+        if r.success:
+            health_tracker.record_success(name, r.latency_ms)
+            health_tracker.record_auth_success(name)
+        else:
+            error_str = r.error or ""
+            health_tracker.record_failure(name, error_str)
+            if "AuthenticationError" in error_str:
+                health_tracker.record_auth_failure(name)
+            elif "CloudflareBlockError" in error_str:
+                health_tracker.record_captcha(name)
+
     return ChatResponse(
         prompt=req.prompt,
         results=results,
         total_latency_ms=round((asyncio.get_event_loop().time() - t0) * 1000, 1),
     )
+
+
+@app.get("/provider-health")
+async def provider_health() -> dict:
+    """Provider health dashboard — per-provider metrics.
+
+    Shows: success_rate, auth_rate, avg_latency, captcha_count,
+    popup_count, recovery_count, status (healthy/degraded/unhealthy),
+    cooldown state.
+    """
+    from ai_orchestrator.adapters.recovery_engine import recovery_engine
+
+    dashboard = health_tracker.get_dashboard()
+    dashboard["cooldowns"] = recovery_engine.get_all_cooldowns()
+    return dashboard
 
 
 # ── Workspace & runtime endpoints ────────────────────────────────

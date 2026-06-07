@@ -74,6 +74,19 @@ _CHAT_PATH_HINTS: tuple[tuple[re.Pattern, float], ...] = (
     (re.compile(r"/chat/send", re.I), 0.35),
     (re.compile(r"/api/chat/completions?", re.I), 0.40),
     (re.compile(r"/completion", re.I), 0.20),
+    # Kimi (kimi.com)
+    (re.compile(r"/api/chat/segment", re.I), 0.40),
+    (re.compile(r"/kimiplus/chat", re.I), 0.40),
+    (re.compile(r"/api/chat\b", re.I), 0.30),
+    # MiniMax (agent.minimax.io)
+    (re.compile(r"/v1/text/chatcompletion", re.I), 0.40),
+    (re.compile(r"/agent/chat", re.I), 0.35),
+    # MiMo / Xiaomi (aistudio.xiaomimimo.com)
+    (re.compile(r"/api/v1/generate", re.I), 0.35),
+    (re.compile(r"/api/chat/stream", re.I), 0.40),
+    # Qwen (chat.qwen.ai)
+    (re.compile(r"/api/v1/qwen", re.I), 0.35),
+    (re.compile(r"/api/chat/qwen", re.I), 0.35),
 )
 
 # URLs that are clearly not chat responses.

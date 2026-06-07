@@ -47,7 +47,7 @@ class TestFeatureVector:
     def test_to_list_length(self):
         fv = FeatureVector()
         lst = fv.to_list()
-        assert len(lst) == 33
+        assert len(lst) == 30
 
     def test_to_list_values(self):
         fv = FeatureVector(
