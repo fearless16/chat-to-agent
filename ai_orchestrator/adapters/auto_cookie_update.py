@@ -43,8 +43,27 @@ def _cookies_to_netscape(cookies: list[dict], domain_hint: str = "") -> str:
     return "\n".join(lines)
 
 
+_SAMESITE_NORMALIZE = {
+    "unspecified": "None",
+    "no_restriction": "None",
+    "lax": "Lax",
+    "strict": "Strict",
+    "none": "None",
+}
+
+
+def _normalize_samesite(ss: str) -> str:
+    return _SAMESITE_NORMALIZE.get(ss.lower(), ss)
+
+
 def _cookies_to_storage_state(cookies: list[dict]) -> dict:
-    """Convert Playwright cookie list to a storage_state dict."""
+    """Convert Playwright cookie list to a storage_state dict.
+    Normalizes sameSite values to Playwright-accepted values.
+    """
+    for c in cookies:
+        ss = c.get("sameSite", "")
+        if ss:
+            c["sameSite"] = _normalize_samesite(ss)
     return {"cookies": cookies, "origins": []}
 
 

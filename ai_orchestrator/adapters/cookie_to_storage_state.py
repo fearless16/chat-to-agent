@@ -5,6 +5,18 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+_SAMESITE_NORMALIZE = {
+    "unspecified": "None",
+    "no_restriction": "None",
+    "lax": "Lax",
+    "strict": "Strict",
+    "none": "None",
+}
+
+
+def _normalize_samesite(ss: str) -> str:
+    return _SAMESITE_NORMALIZE.get(ss.lower(), ss)
+
 
 def netscape_cookies_to_storage_state(
     cookie_file: str | Path, domain_override: str | None = None
@@ -60,7 +72,7 @@ def netscape_cookies_to_storage_state(
             "expires": expires,
             "httpOnly": False,
             "secure": secure,
-            "sameSite": "Lax",
+            "sameSite": _normalize_samesite("Lax"),
         })
 
     return {

@@ -1,7 +1,0 @@
-# Netscape HTTP Cookie File
-# Auto-converted from USAGE.md
-# Updated: 2026-06-07 09:47:40
-
-.xiaomimimo.com	TRUE	/	FALSE	1783397479	serviceToken	"lBp+en8jmZclRZ3zFZn3GLJXTujqIDFHDcl3ARUa+Bh5I+1RfOdiFHkWCNrYxgVsdEpdtnpZ3uSf3QrbKB4Suv3M6qVkI/WtdgJxGdJmpXnv3/kB3eDmTvUKxKqUAhlL8VAXuz3sEOb6TgXz/GsNJfJxeZEmbMFKRpsM1blgWhY4rhpqpwDF1VBlAMjKo/flxR8CP4/F1k9X952Br+GuPX3apaZ2tCMFsxQC7vBabgKbJZrs0M8rbYmjQuBLcXUN98OA82hw8L8ridzXTh30+fitBgJwETxZFCYk7mi1+V4GHjdSRi+lkV84wdRSHcDP0PrVjnqee5Wk8tf6KGlRUYQcluYQXlYDZzcCgkXJ7rk="
-.xiaomimimo.com	TRUE	/	FALSE	1783426279	userId	5697916973
-.xiaomimimo.com	TRUE	/	FALSE	1783397479	xiaomichatbot_ph	"KXn9wbtM+IDwZqtB38mE4w=="

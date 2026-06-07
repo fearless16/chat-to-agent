@@ -1,8 +1,0 @@
-# Netscape HTTP Cookie File
-# Auto-converted from USAGE.md
-# Updated: 2026-06-07 09:47:40
-
-.deepseek.com	TRUE	/	TRUE	1781150548	aws-waf-token	0bebdae5-97f1-47c8-bbbb-1ab8a409ec08:BgoAh5ocXSECAAAA:pzaGRzq4pmuW55WRzTZ9aIM85soZTwEDnTqYb/kfK2RS+D/PkKjv83bk5JGOd3GEksVTrRu5+28NZbtcJBVgx7BfNJ1IWMiOOLKfVWqXVamd3u85O8Ieu09w+lsV96hBCnrTmqFMrzYo9S9wOEUR9/ZIERsF3ClIQSFlrgkRC3D2bz+rbLzsHNVlDelC18A=
-chat.deepseek.com	FALSE	/	FALSE	1815364949	smidV2	202606070932290668b177188918aa3a7a53f4f4140f3700ccebfa9d5e600e0
-chat.deepseek.com	FALSE	/	FALSE	1815364949	.thumbcache_6b2e5483f9d858d7c661c5e276b6a6ae	SIExbMDPHVifeoDSncrGBfTRtKFUrARw35pfP7JAysI6f4oWce8AXmPOsaJ8dcLhSMXXv1VFGLUpgZcTLWYBpQ%3D%3D
-chat.deepseek.com	FALSE	/	TRUE	0	ds_session_id	615e1c8fd3b84f1183d25dbd7575b86d
