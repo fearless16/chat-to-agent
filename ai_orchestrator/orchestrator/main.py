@@ -160,17 +160,17 @@ _PROVIDER_CLASS_MAP: dict[str, type[ProviderAdapter]] = {
 
 
 def _load_auth_for(provider: str) -> dict | None:
+    auth_path = Path(f"profiles/{provider}_auth.json")
+    if auth_path.exists():
+        import json
+        with auth_path.open() as fh:
+            return json.load(fh)
     cookie_path = Path(f"profiles/{provider}_cookies.txt")
     if cookie_path.exists():
         from ai_orchestrator.adapters.cookie_to_storage_state import (
             netscape_cookies_to_storage_state,
         )
         return netscape_cookies_to_storage_state(cookie_path)
-    auth_path = Path(f"profiles/{provider}_auth.json")
-    if auth_path.exists():
-        import json
-        with auth_path.open() as fh:
-            return json.load(fh)
     return None
 
 
