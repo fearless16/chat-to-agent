@@ -11,7 +11,7 @@ class XiaomiMiMoUIAdapter(EngineUIAdapter):
     mock_model = "mimo-v2.5-pro"
     mock_context_limit = 200_000
     _site = SiteConfig(
-        url="https://aistudio.xiaomimimo.com",
+        url="https://aistudio.xiaomimimo.com/#/c",
         name="XiaomiMiMo",
         title_keyword="XiaomiMiMo",
     )
