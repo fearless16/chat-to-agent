@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 from ai_orchestrator.adapters.base import ProviderAdapter, ProviderResponse
 from ai_orchestrator.adapters.cookie_validator import (
     check_cloudflare_challenge,
+    check_cookie_freshness,
     check_post_navigation_auth,
     validate_storage_state,
 )
@@ -574,6 +575,16 @@ class EngineUIAdapter(ProviderAdapter):
                     self.provider_name,
                     "; ".join(cv.errors),
                 )
+            else:
+                # Check cookie expiry (skip session cookies, only auth-relevant)
+                fresh = check_cookie_freshness(self._storage_state)
+                if fresh.expired_soon:
+                    log.warning(
+                        "[%s] Cookie EXPIRY: %s — auto-refresh will update after "
+                        "successful navigation. If auth fails, re-export cookies.",
+                        self.provider_name,
+                        "; ".join(fresh.errors),
+                    )
 
         t0 = time.monotonic()
         try:

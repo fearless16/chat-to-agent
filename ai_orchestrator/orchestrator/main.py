@@ -175,9 +175,9 @@ def _load_auth_for(provider: str) -> dict | None:
 
 
 # Map of provider → persistent browser profile directory on disk.
-_PERSISTENT_PROFILE_MAP: dict[str, str] = {
-    "qwen_ui": "qwen_browser_profile",
-}
+# Only use persistent profiles when cookies alone are insufficient
+# (e.g., provider requires localStorage populated by prior browser session).
+_PERSISTENT_PROFILE_MAP: dict[str, str] = {}
 
 
 # Map of provider → browser channel to use.
